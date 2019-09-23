@@ -30,6 +30,6 @@ if (require.main == module) {
         }
 
         test.report();
-        process.exit();
+        process.exit((test.failed || test.errored) ? 1 : 0);
     })();
 }
