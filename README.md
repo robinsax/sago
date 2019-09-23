@@ -34,6 +34,7 @@ class Recipe extends Model {
 class Ingredient extends Model {
     schema = {
         id: ['uuid', {pk: true}],
+        recipe_id: ['uuid', {fk: 'recipes.id'}],
         name: ['string', {length: 40}],
         quantity: 'int'
     }

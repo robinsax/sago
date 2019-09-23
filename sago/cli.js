@@ -5,10 +5,10 @@ const { _getDatabase } = require('./database');
 
 //  Define the help message.
 const HELP = `
-node sago
+Usage: node sago
     help OR --help
         Show this message.
-    up --app=<app_path> (optional: --db=<database_name>)
+    up --app=<app_path> (optional: --db=<database_name>, --full, --down)
         Emit up SQL for the given app. Specify a database if the app creates
         more than one.
 `.trim();
@@ -23,7 +23,7 @@ const FLAG_SHORTHANDS = {
 *   A specific database name can be specified if the application defines more
 *   than one. 
 */
-const sqlizeSpecified = ({app, db, down, ...others}, reject) => {
+const sqlizeSpecified = ({app, db, down, full, ...others}, reject) => {
     //  Ensure command line is valid.
     if (Object.keys(others).length || !app) return reject();
 
@@ -32,7 +32,7 @@ const sqlizeSpecified = ({app, db, down, ...others}, reject) => {
         require('.' + app);
     }
     catch (err) {
-        return reject(`Can't import: ${ app } (${ err })`);
+        return reject(`Can't import: ${ app }`);
     }
 
     //  Retrieve the created database
@@ -41,7 +41,20 @@ const sqlizeSpecified = ({app, db, down, ...others}, reject) => {
 
     //  Emit SQL.
     if (down) console.log(database.sqlizeDown());
+    if (full) {
+        const { PGUSER, PGPASSWORD } = process.env;
+        console.log(`create user ${ PGUSER };`);
+        console.log(`alter user ${ PGUSER } with login;`);
+        console.log(`alter user ${ PGUSER } with password '${ PGPASSWORD }';`);
+    }
     console.log(database.sqlize());
+    if (full) {
+        console.log(`grant all on database ${ 
+            database.name 
+        } to ${ 
+            process.env.PGUSER 
+        };`);
+    }
 }
 
 /**
@@ -56,6 +69,7 @@ const cli = () => {
     */
     const rejectArguments = (message=null) => {
         process.stderr.write(message || 'Invalid command line');
+        process.stderr.write('\n');
         process.stderr.write(HELP);
         return 1;
     }

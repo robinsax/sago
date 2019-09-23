@@ -17,7 +17,7 @@ const { writeLockArray } = require('./utils');
 const _sentinel = Math.random();
 
 /**
-*   The base relation proxy class provides machingery shared between the 
+*   The base relation proxy class provides machinery shared between the 
 *   one-side and many-side implementations. 
 */
 class RelationProxy {
@@ -174,8 +174,6 @@ class RelationProxy {
     *   Caviat: if both this model and the remote model are freshly
     *   constructed, allow the invoking write operation to continue since there
     *   is no relationship to load.
-    * 
-    *   XXX: This ^^ should be even more nuanced.
     */
     _assertLoadStateSharedWith(model) {
         //  Relationships can be constructed without being loaded if both models
@@ -491,7 +489,7 @@ class ManyRelationProxy extends RelationProxy {
         //  don't need to worry about it.
         if (this._value == _sentinel) return;
 
-        this._value.splice(this._value.indexOf(model, 1));
+        this._value.splice(this._value.indexOf(model), 1);
     }
 
     /**

@@ -1,8 +1,8 @@
 const fs = require('fs');
 
 process.env.PGDATABASE = 'sago_test';
-process.env.PGUSER = 'postgres';
-process.env.PGPASSWORD = 'postgres';
+process.env.PGUSER = 'sago_test';
+process.env.PGPASSWORD = 'sago_test';
 
 const sago = require('sago');
 
