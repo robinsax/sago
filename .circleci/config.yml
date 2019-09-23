@@ -15,5 +15,4 @@ jobs:
       - run: NODE_PATH=. node sago up --app=./tests | psql -U sago_test -h localhost -p 5432
       - run: NODE_PATH=. ./node_modules/c8/bin/c8.js node ./tests
       - run: NODE_PATH=. ./node_modules/c8/bin/c8.js report
-      - store_artifacts:
-          path: ./coverage/tmp/
+      - run: NODE_PATH=. ./node_modules/c8/bin/c8.js report --reporter=text-lcov | ./node_modules/coveralls/bin/coveralls.js 
