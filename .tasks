@@ -1,0 +1,3 @@
+model delete relationship side effects
+fk assignment side effect on relationships
+ordering checks for asc vs. desc

@@ -1,0 +1,17 @@
+{
+  "name": "sago",
+  "version": "0.0.1",
+  "description": "A mini-ORM for node & PostgreSQL",
+  "main": "sago",
+  "scripts": {
+    "test": "node tests"
+  },
+  "author": "Robin Saxifrage",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^7.12.1"
+  },
+  "devDependencies": {
+    "c8": "^5.0.4"
+  }
+}
