@@ -242,7 +242,7 @@ class OneRelationProxy extends RelationProxy {
     *   Assign the value of this relationship without triggering side effects.
     *   This should only be called as a result of side effects elsewhere.
     */
-    _setSideEffectFree(value) {
+    _setAsSideEffect(value) {
         //  If the relation is valueless, we haven't loaded it yet so there's
         //  no need for other side effects to worry about it.
         if (this._value == _sentinel) return;
@@ -565,7 +565,7 @@ class ManyRelationProxy extends RelationProxy {
         this._resort();
 
         //  Update the remote side if there is one loaded.
-        if (modelRemoteSide) modelRemoteSide._setAsSideEffect(this._value);
+        if (modelRemoteSide) modelRemoteSide._setAsSideEffect(this.host);
 
         //  Emit an update for the new friend model. As described in 
         //  `OneRelationProxy`, we need to do this to prevent mismatch with
@@ -579,7 +579,9 @@ class ManyRelationProxy extends RelationProxy {
     *   Remove a model from this relationship. This method handles de-coupling
     *   on both sides. 
     */
-    async remove(model) {
+    remove(model) {
+        //  Assert that either these models are both ephemeral, or they belong
+        //  to the same session.
         this._assertLoadStateSharedWith(model);
 
         //  Retrieve this index of the model to remove in the value here and
@@ -602,7 +604,10 @@ class ManyRelationProxy extends RelationProxy {
         //  Emit an update for the new friend model to prevent mismatch with
         //  relations loaded later. See `OneRelationProxy.set()` for a detailed
         //  description of that case.
-        this.session._emitOneUpdate(model);
+        if (model._bound) return new Promise(resolve => {
+            this.session._emitOneUpdate(model);
+            resolve();
+        });
     }
 
     /**

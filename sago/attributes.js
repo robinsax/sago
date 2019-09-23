@@ -79,7 +79,7 @@ class AttributeProxy {
         //  Define this as the property descriptor for the proxied attribute on
         //  the parent model.
         Object.defineProperty(this.model, this.attribute, {
-            enumerable: false,
+            enumerable: true,
             get: this.get,
             set: this.set
         });

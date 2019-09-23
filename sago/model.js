@@ -103,6 +103,10 @@ class Model {
         //  fields. If there is no schema assigned to this model class yet,
         //  we're in that state and don't need to construct anything.
         if (_schema) {
+            //  Remove definitions.
+            delete this.schema;
+            delete this.collection;
+
             //  Set up model machinery.
             hideAttributes(this, ...[
                 '_session', '_relationCache', '_setAttributeProxyStates',

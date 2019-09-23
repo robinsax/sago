@@ -23,6 +23,20 @@ const testSimpleRelations = async (database, test) => {
 
     test.assertTrue('Remote value after clear of one-side proxy', fish.members.get().length === 0);
 
+    fish.members.push(trout);
+
+    test.assertTrue('Local assignment of many-side proxy', (
+        fish.members.get().length == 1 && fish.members.get()[0] == trout
+    ));
+
+    test.assertTrue('Remote value after assignment to many-side proxy', trout.type.get() == fish);
+
+    fish.members.remove(trout);
+
+    test.assertTrue('Local clear of many-side proxy', fish.members.get().length === 0);
+
+    test.assertTrue('Remote value after clear of many-side proxy', trout.type.get() === null);
+
     trout.type.set(fish);
 
     const salmon = new Ingredient({name: 'salmon', type: fish});
