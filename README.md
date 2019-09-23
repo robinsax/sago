@@ -1,5 +1,7 @@
 # sago
 
+[![CircleCI](https://circleci.com/gh/robinsax/sago/tree/master.svg?style=svg)](https://circleci.com/gh/robinsax/sago/tree/master)
+
 sago is a mini-ORM for node & PostgreSQL. It's intended for web application development.
 
 ## At a glance
