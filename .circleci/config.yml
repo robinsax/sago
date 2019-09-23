@@ -6,6 +6,6 @@ jobs:
     working_directory: ~/repo
     steps:
       - checkout
-      - run: sudo apt-get install postgresql && sudo npm i --save-dev -g
+      - run: sudo apt-get install postgresql && npm i --save-dev
       - run: chmod +x ./bin/test-with-setup.sh
       - run: ./bin/test-with-setup.sh
