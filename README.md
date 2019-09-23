@@ -64,7 +64,7 @@ class Ingredient extends Model {
     eggs.recipe_id == breakfast.id; // true
 
     breakfast.name = 3; // Throws an AttributeTypeError.
-    breakfast.name = new Array(41).fill('x'); // Throws an AttributeValueError.
+    breakfast.name = new Array(41).fill('x').join(''); // Throws an AttributeValueError.
 
     //  Super-powered batch updates from untrusted input. This throws a
     //  friendly (aggregate) error you can create a response from.
