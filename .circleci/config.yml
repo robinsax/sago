@@ -8,4 +8,4 @@ jobs:
       - checkout
       - run: sudo apt-get install postgresql && sudo npm i --save-dev -g
       - run: chmod +x ./bin/test-with-setup.sh
-      - run: cat ./bin/test-with-setup.sh
+      - run: ./bin/test-with-setup.sh
