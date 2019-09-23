@@ -4,7 +4,7 @@ sago is a mini-ORM for node & PostgreSQL. It's intended for web application deve
 
 ## At a glance
 
-* Tiny and opinionated, like Angela from The Office.
+* Tiny and opinionated, like Angela from *The Office*.
 * Zero needless dependencies; just `node-postgres`.
 * Attactive, low character count usage code.
 * Strictly typed and validated model attributes.
