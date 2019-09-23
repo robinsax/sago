@@ -1,0 +1,10 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/node:12.10
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run: sudo apt-get install postgresql && npm i --save-dev
+      - run: cat ./bin/test-with-setup.sh | /bin/bash
