@@ -49,11 +49,9 @@ const sqlizeSpecified = ({app, db, down, full, ...others}, reject) => {
     }
     console.log(database.sqlize());
     if (full) {
-        console.log(`grant all on database ${ 
-            database.name 
-        } to ${ 
+        console.log(`grant all privileges on all tables in schema public to ${ 
             process.env.PGUSER 
-        };`);
+        }`);
     }
 }
 
