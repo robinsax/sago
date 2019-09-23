@@ -8,6 +8,6 @@ jobs:
       - checkout
       - run: sudo apt-get install postgresql && npm i --save-dev
       - run: sudo service postgresql restart
-      - run: NODE_PATH=. node sago up --app=./tests --full --down | sudo -u postgres psql
+      - run: NODE_PATH=. node sago up --app=./tests --full --down | tee | sudo -u postgres psql
       - run: NODE_PATH=. ./node_modules/c8/bin/c8.js node ./tests
 
