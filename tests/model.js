@@ -19,10 +19,6 @@ class Ingredient extends Model {
     };
 
     get type() { return this.oneRelation(IngredientType); }
-
-    async serialize() {
-        return await super.serialize({async: true, include: ['type']});
-    }
 }
 
 class Recipe extends Model {
@@ -34,11 +30,6 @@ class Recipe extends Model {
     };
 
     get ingredient_items() { return this.manyRelation('ingredient_items') }
-
-    async addIngredient(ingredient) {
-        await this.ingredientItems.push(ingredient);
-    }
-
 
     async cook() {
         this.last_cooked_at = new Date();

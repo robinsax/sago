@@ -84,9 +84,9 @@ class AttributeType {
     *   validation check.
     */
     validateOrDie(value) {
-        if (!this.validate(value)) {
-            throw new AttributeTypeError(value, this.nativeType);
-        }
+        if (!this.validate(value)) throw new AttributeTypeError(
+            value, this.nativeType
+        );
     }
 
     /**
@@ -271,14 +271,14 @@ class UUIDAttributeType extends AttributeType {
 */
 class DatetimeAttributeType extends AttributeType {
     constructor() {
-        super(null, 'timestamp');
+        super(Date, 'timestamp');
     }
 
     /**
     *   Return whether or not the given value is null or a `Date`. 
     */
     validate(value) {
-        return !value || value instanceof Date;
+        return !value || (value instanceof Date);
     }
 
     /**
@@ -294,13 +294,16 @@ class DatetimeAttributeType extends AttributeType {
     */
     deserialize(value) {
         //  Assert type.
-        super.validateOrDie(value);
+        if (typeof value !== 'string') throw new AttributeTypeError(
+            value, 'string'
+        );
 
         //  Parse with failure safety.
-        value = Date.parse(value);
-        if (isNaN(value)) {
-            throw new AttributeValueError(value, 'ISO date format');
-        }
+        value = new Date(value);
+        if (isNaN(value.getTime())) throw new AttributeValueError(
+            value, 'ISO date format'
+        );
+
         return value;
     }
 }

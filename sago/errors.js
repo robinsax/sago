@@ -39,7 +39,9 @@ class AttributeErrors extends AttributeError {
     constructor(errors) {
         super(`Multiple attribute errors: \n  ${
             Object.keys(errors).map(key => (
-                `- ${ key }: ${ errors[key] }`
+                `- ${ key }: ${ errors[key].constructor.name }\n    ${ 
+                    (errors[key].stack + '').split('\n').join('\n    ')
+                }`
             )).join(',\n  ')
         }`);
         this.errors = errors;

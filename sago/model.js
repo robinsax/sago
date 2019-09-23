@@ -3,7 +3,7 @@
 *   defined here or risk undefined behaviour.
 */
 const { 
-    AttributeError, AttributeErrors, AttributeKeyError, SchemaError 
+    AttributeError, AttributeErrors, AttributeKeyError
 } = require('./errors');
 const { 
     OneRelationProxy, ManyRelationProxy, RelationProxy 
@@ -161,26 +161,35 @@ class Model {
         Object.keys(updateObject).forEach(key => {
             //  Ensure this is a valid attribute key.
             if (!(key in attributes)) {
-                errors.push(new AttributeKeyError(key));
+                errors[key] = new AttributeKeyError(key);
                 return;
             }
 
-            let value = updateObj[key];
+            let value = updateObject[key];
             if (serialized) {
                 //  Deserialize the given value using it's correct type with
                 //  error collection.
                 try {
                     value = attributes[key].deserialize(value);
                 }
-                catch (ex) {
-                    if (!(ex instanceof AttributeError)) throw ex;
+                catch (err) {
+                    if (!(err instanceof AttributeError)) throw err;
                     
-                    errors.push(ex);
+                    errors[key] = err;
                     return;
                 }
             }
 
-            this[key] = value;
+            //  Perform assignment with safety for value or type violations.
+            try {
+                this[key] = value;
+            }
+            catch (err) {
+                if (!(err instanceof AttributeError)) throw err;
+
+                errors[key] = err;
+                return;
+            }
         });
 
         //  If errors were encounted, throw a cummulative container.
