@@ -1,6 +1,6 @@
 # sago
 
-[![CircleCI](https://circleci.com/gh/robinsax/sago/tree/master.svg?style=svg)](https://circleci.com/gh/robinsax/sago/tree/master) [![Coverage Status](https://coveralls.io/repos/github/robinsax/sago/badge.svg?branch=master)](https://coveralls.io/github/robinsax/sago?branch=master)
+[![CircleCI](https://circleci.com/gh/robinsax/sago/tree/master.svg?style=svg)](https://circleci.com/gh/robinsax/sago/tree/master) [![Coverage Status](https://coveralls.io/repos/github/robinsax/sago/badge.svg?branch=master?rev=1)](https://coveralls.io/github/robinsax/sago?branch=master)
 
 sago is a mini-ORM for node & PostgreSQL. It's intended for web application development.
 
