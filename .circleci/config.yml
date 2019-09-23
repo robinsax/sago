@@ -7,4 +7,5 @@ jobs:
     steps:
       - checkout
       - run: sudo apt-get install postgresql && sudo npm i --save-dev -g
-      - run: cat ./bin/test-with-setup.sh | /bin/bash
+      - run: chmod +x ./bin/test-with-setup.sh
+      - run: cat ./bin/test-with-setup.sh
