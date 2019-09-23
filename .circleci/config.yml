@@ -3,11 +3,14 @@ jobs:
   build:
     docker:
       - image: circleci/node:12.10
+      - image: circleci/postgres:10
+        environment:
+          POSTGRES_USER: sago_test
+          POSTGRES_DB: sago_test
     working_directory: ~/repo
     steps:
       - checkout
-      - run: sudo apt-get install postgresql postgresql-client && npm i --save-dev
-      - run: sudo service postgresql restart
-      - run: NODE_PATH=. node sago up --app=./tests --full
-      - run: NODE_PATH=. node sago up --app=./tests --full | psql
+      - run: sudo apt-get install postgresql-client && npm i --save-dev
+      - run: dockerize -wait tcp://localhost:5432 -timeout 1m
+      - run: NODE_PATH=. node sago up --app=./tests | -U sago_test psql
       - run: NODE_PATH=. ./node_modules/c8/bin/c8.js node ./tests
