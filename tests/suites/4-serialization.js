@@ -30,6 +30,8 @@ const testSerialization = async (database, test) => {
     const mark = new Date().toISOString();
     fishDinner.update({last_cooked_at: mark}, true);
     test.assertTrue('Bulk serialized update succeeds', fishDinner.last_cooked_at.toISOString() == mark);
+
+    await session.close();
 };
 
 module.exports = testSerialization;

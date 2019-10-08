@@ -3,7 +3,7 @@
 *   defined here or risk undefined behaviour.
 */
 const { 
-    AttributeError, AttributeErrors, AttributeKeyError
+    AttributeError, AttributeErrors, AttributeKeyError, ModelStateError
 } = require('./errors');
 const { 
     OneRelationProxy, ManyRelationProxy, RelationProxy 
@@ -47,19 +47,13 @@ const resolveRelationProxyWithCache = (
 *   forming the relationship.
 */
 const registerRelationshipIntentOnEphemeral = (
-    host, target, sourceAttribute, destinationAttribute
+    host, target, sourceAttribute, destinationAttribute, reverse=false
 ) => {
-    //  Sanity check; assert the both models are currently ephemeral.
-    //  XXX: It is theoretically possible to allow this if only the host is
-    //       ephemeral, but it would require the corresponding
-    //       `ManyRelationProxy` to be put into a state that doesn't reflect
-    //       the true state of the data model (consider after coffee).
-    if (host._bound || target._bound) throw new Error(
-        'A relationship proxy attempted to register an ephemeral relation with'
-        + ' a row-bound model (this is a bug in sago).'
-    );
+    const holder = reverse ? target : host,
+        other = reverse ? host : target;
 
-    if (host._bindIntents.filter(i => (
+    //  Ensure this intent doesn't already exist.
+    if (holder._bindIntents.filter(i => (
         target == i.target && sourceAttribute == i.sourceAttribute &&
         destinationAttribute == i.destinationAttribute
     )).length > 0) return;
@@ -67,7 +61,11 @@ const registerRelationshipIntentOnEphemeral = (
     //  Register the coupling to be performed on bind. This will involve first
     //  creating the target model, then assigning it's ID to the foreign key
     //  attribute of the host.
-    host._bindIntents.push({target, sourceAttribute, destinationAttribute});
+    holder._bindIntents.push({target: other, sourceAttribute, destinationAttribute, reverse});
+    //  Also register the opposite direction to support automatically adding
+    //  models on the one-side of a relation when their many-side counterpart
+    //  is added.
+    other._inboundBindIntents.push(holder);
 }
 
 /**
@@ -110,7 +108,7 @@ class Model {
             //  Set up model machinery.
             hideAttributes(this, ...[
                 '_session', '_relationCache', '_setAttributeProxyStates',
-                '_dirty', '_bound', '_bindIntents'
+                '_dirty', '_bound', '_bindIntents', '_inboundBindIntents'
             ]);
             this._setAttributeProxyStates = attachAttributeProxies(
                 this, _schema
@@ -120,12 +118,13 @@ class Model {
             this._session = null;
             this._relationCache = {};
             this._bindIntents = reconstruction ? null : [];
+            this._inboundBindIntents = reconstruction ? null : [];
             
             //  Maybe copy attributes from the supplied source object.
             if (sourceObject) {
-                if (typeof sourceObject != 'object') {
-                    throw new Error('Bad source object');
-                }
+                if (typeof sourceObject != 'object') throw new Error(
+                    'Bad source object'
+                );
                 
                 Object.keys(sourceObject).forEach(key => {
                     if (key in _schema.attributes) {
@@ -136,19 +135,19 @@ class Model {
                         //  Assign one-side relation proxies if it's able to
                         //  happen synchronously.
                         const result = this[key].set(sourceObject[key]);
-                        if (result instanceof Promise) {
-                            throw new ModelStateError(
-                                'Cannot join relationship synchronously'
-                            );
-                        }
+                        if (result instanceof Promise) throw new ModelStateError(
+                            'Cannot join relationship synchronously'
+                        );
                     }
                     else throw new AttributeKeyError(key);
                 });
             }
-            this.modelDidConstruct();
 
             //  Enable dirtying by attribute proxies.
             this._setAttributeProxyStates({dirtying: true});
+
+            //  Fire lifecycle hook.
+            this.modelDidConstruct();
         }
     }
 
@@ -322,6 +321,32 @@ class Model {
         });
     }
 
+    async setRelations(relations) {
+        if (this._bound) throw new ModelStateError(
+            'Cannot use setRelations() on row-bound model'
+        );
+
+        const keys = Object.keys(relations);
+        if (keys.length == 0) return;
+
+        keys.forEach(key => {
+            if (!relations[key]._bound) throw new ModelStateError(
+                'Only row-bound models can be coupled with setRelations()'
+            );
+
+            const relationProxy = this[key];
+
+            if (!(relationProxy instanceof OneRelationProxy)) throw new Error(
+                'setRelations only supports one-side assignment'
+            );
+
+            relationProxy.set(relations[key], true);
+        });
+
+        await relations[keys[0]]._session.add(this);
+        return this;
+    }
+
     /**
     *   Return a one-side relation proxy. If there are multiple foreign keys
     *   that make this relation ambiguous, the key of the one to use must be
@@ -356,7 +381,7 @@ class Model {
     *   Note that this method is invoked before type assertion, so the
     *   assignment isn't guarenteed to succeed.
     */
-	attributeWillSet(attribute, value) { return value; }
+	modelAttributeWillSet(attribute, value) { return value; }
     
     /**
     *   A model lifecycle stub called after construction and reconstruction. 

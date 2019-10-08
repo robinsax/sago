@@ -83,9 +83,26 @@ class AttributeValueError extends AttributeError {
     }
 }
 
+/**
+*   Since foreign key existance constraints aren't checked until commit time
+*   to allow headache free coupling, we throw this if at commit time a required
+*   foreign key attribute value is unset. 
+*/
+class RelationalAttributeError extends AttributeError {
+    constructor(model, attribute) {
+        super(`Relationship across ${ 
+            attribute 
+        } was never set up for ${ 
+            model 
+        }`);
+        this.model = model;
+        this.attribute = attribute;
+    }
+}
+
 //  Exports.
 module.exports = { 
     ModelStateError, ImmutableError, SessionStateError, AttributeErrors, 
     AttributeError, AttributeTypeError, AttributeKeyError, 
-    AttributeValueError, SchemaError
+    AttributeValueError, SchemaError, RelationalAttributeError
 };

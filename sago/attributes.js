@@ -4,6 +4,36 @@
 const { ModelStateError } = require('./errors');
 
 /**
+*   Attach an attribute proxy to the given model for each attribute in the
+*   given schema and return a callable that can be used to control their
+*   combined states. 
+*/
+const attachAttributeProxies = (model, schema) => {
+    const proxySet = [];
+    
+    Object.keys(schema.attributes).forEach(attribute => {
+        const proxy = new AttributeProxy(model, attribute);
+        proxy.bind();
+        proxySet.push(proxy);
+    });
+
+    return proxyStateUpdate => proxySet.forEach(proxy => {
+        proxy.updateState(proxyStateUpdate)
+    });
+}
+
+/**
+*   Define the set of attributes (really properties, but this packaging seems
+*   good) as being non-enumerable on the given model. 
+*/
+const hideAttributes = (model, ...attributes) => {
+    Object.defineProperties(model, attributes.reduce((map, property) => {
+        map[property] = {enumerable: false, writable: true};
+        return map;
+    }, {}));
+};
+
+/**
 *   Attribute proxies define themselves onto models and handle type enforcement
 *   and relational side-effects for their proxied attribute.
 */
@@ -44,7 +74,7 @@ class AttributeProxy {
         //  Allow the model lifecycle to impact attribute value. Note this
         //  lifecycle method being invoked doesn't nessesarily mean the 
         //  assignment will complete successfully.
-        newValue = this.model.attributeWillSet(this.attribute, newValue);
+        newValue = this.model.modelAttributeWillSet(this.attribute, newValue);
 
         //  Ensure the type for this attributes validates the new value. Note
         //  we allow null values even if the attribute type definition isn't
@@ -85,36 +115,6 @@ class AttributeProxy {
         });
     }
 }
-
-/**
-*   Attach an attribute proxy to the given model for each attribute in the
-*   given schema and return a callable that can be used to control their
-*   combined states. 
-*/
-const attachAttributeProxies = (model, schema) => {
-    const proxySet = [];
-    
-    Object.keys(schema.attributes).forEach(attribute => {
-        const proxy = new AttributeProxy(model, attribute);
-        proxy.bind();
-        proxySet.push(proxy);
-    });
-
-    return proxyStateUpdate => proxySet.forEach(proxy => {
-        proxy.updateState(proxyStateUpdate)
-    });
-}
-
-/**
-*   Define the set of attributes (really properties, but this packaging seems
-*   good) as being non-enumerable on the given model. 
-*/
-const hideAttributes = (model, ...attributes) => {
-    Object.defineProperties(model, attributes.reduce((map, property) => {
-        map[property] = {enumerable: false, writable: true};
-        return map;
-    }, {}));
-};
 
 //  Exports.
 module.exports = { attachAttributeProxies, hideAttributes };

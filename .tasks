@@ -1,4 +1,5 @@
-model delete relationship side effects
 fk assignment side effect on relationships
-ordering checks for asc vs. desc
+fk attribute checks should check for existance on loaded models
 assert deep serialization config shape
+remove invokeHooks pattern
+repackage

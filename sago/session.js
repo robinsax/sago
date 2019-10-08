@@ -4,9 +4,15 @@
 *   through sessions. 
 */
 const { 
-    SchemaError, SessionStateError, ModelStateError 
+    SchemaError, SessionStateError, ModelStateError, RelationalAttributeError
 } = require('./errors');
 const { resolveOneHotAttributeReference } = require('./utils');
+const { 
+    OneRelationProxy, ManyRelationProxy, relationProxiesAttachedTo 
+} = require('./relations');
+
+//  XXX: invokeHooks is over-engineering. add method should inspect bind intents
+//       itself.
 
 /**
 *   Return a key to uniquely identify the given model in a session state. 
@@ -38,14 +44,34 @@ const stateKeyForModel = model => (
 const orderEphemeralModelsByRelationshipIntent = models => {
     //  TODO: Cycle handling.
 
+    //  Create complete input list.
+    const allModels = [];
+    models.forEach(model => {
+        if (allModels.indexOf(model) >= 0) return;
+        allModels.push(model);
+
+        if (model._inboundBindIntents) {
+            model._inboundBindIntents.forEach(friend => {
+                if (allModels.indexOf(friend) >= 0) return;
+
+                allModels.push(friend);
+            });
+        }
+    });
+    models = allModels;
+
     //  Create output storage.
     const outputModelSet = [], outputHooks = {};
+
+    let nextId = 0;
 
     //  Define the visit algorithm.
     /**
     *   DFS-visit the given model.
     */
     const visit = model => {
+        if (model._bound) return;
+
         //  Check state.
         if (model._dfsState == 2) return;
         if (model._dfsState == 1) throw new Error(
@@ -71,20 +97,23 @@ const orderEphemeralModelsByRelationshipIntent = models => {
         //  be assigned.
         if (model._bindIntents) {
             model._bindIntents.forEach(({
-                target, sourceAttribute, destinationAttribute
+                target, sourceAttribute, destinationAttribute, reverse
             }) => {
-                //  Retrieve a unique key for the target model.
-                const targetKey = stateKeyForModel(target);
+                const registerOn = reverse ? model : target,
+                    oneSide = reverse ? target : model;
+
+                //  Set up a unique key for the target model.
+                registerOn._hookId = registerOn._hookId || nextId++;
 
                 //  Find the current set of hooks and expand it to include
                 //  those required by the relationship to the current model.
-                const existingHooks = outputHooks[targetKey];
-                outputHooks[targetKey] = [
+                const existingHooks = outputHooks[registerOn._hookId];
+                outputHooks[registerOn._hookId] = [
                     ...(existingHooks || []), () => {
                         //  Assign the foreign key value without dirtying.
-                        model._setAttributeProxyStates({dirtying: false});
-                        model[sourceAttribute] = target[destinationAttribute];
-                        model._setAttributeProxyStates({dirtying: true});
+                        oneSide._setAttributeProxyStates({dirtying: false});
+                        oneSide[sourceAttribute] = registerOn[destinationAttribute];
+                        oneSide._setAttributeProxyStates({dirtying: true});                        
                     }
                 ];
             });
@@ -97,11 +126,13 @@ const orderEphemeralModelsByRelationshipIntent = models => {
 
     //  Process the output set and construct the return value.
     return outputModelSet.map(model => {
+        //  Retrieve the set of hooks for this model.
+        const hooks = outputHooks[model._hookId];
+        
         //  Remove algorithm state-tracking property.
         delete model._dfsState;
-        
-        //  Retrieve the set of hooks for this model.
-        const hooks = outputHooks[stateKeyForModel(model)];
+        delete model._hookId;
+
         //  Create an aggregate callable.
         const invokeHooks = () => {
             if (!hooks) return;
@@ -110,6 +141,37 @@ const orderEphemeralModelsByRelationshipIntent = models => {
         };
     
         return {model, invokeHooks};
+    });
+}
+
+//  XXX: Repackage documentation.
+/**
+*   Assert that all foreign keys on the given models that are non-nullable are
+*   assigned a value. Note this does not assert the value is valid, to prevent
+*   side-effect database reads the caller should rely on the supplied
+*   from-database diagnostic to throw a `RelationalAttributeError`. An invalid
+*   value should only be discovered here in two cases: the models are ephemeral
+*   and weren't coupled properly, or an invalid de-coupling is in progress.
+*/
+const assertRelationalAttributesValidForModels = (models) => {
+    models.forEach(model => {
+        //  Retrieve the attribute set definition for this model.
+        const {_schema: {attributes}} = model.constructor;
+
+        //  Ensure each foreign key has a value. We allow the database to
+        //  report if any of those values are invalid.
+        Object.keys(attributes).forEach(attribute => {
+            const type = attributes[attribute];
+            if (!type.options.fk || type.options.nullable) return;
+
+            if (model._bindIntents && model._bindIntents.filter(intent => (
+                intent.sourceAttribute == attribute
+            )).length > 0) return;
+
+            if (!model[attribute]) throw new RelationalAttributeError(
+                model, attribute
+            );
+        });
     });
 }
 
@@ -135,7 +197,7 @@ const validateAndTransformOrderComponents = (orderComponents, attributes) => {
     //  Resolve all elements in the array.
     orderComponents = orderComponents.map(component => (
         resolveOneHotAttributeReference(component, attributes)
-    ))
+    ));
     //  Assert all order components were successfully transformed.
     if (orderComponents.filter(c => !c).length > 0) throw new Error(
         'order() components must be array of or one or attribute reference'
@@ -316,14 +378,14 @@ class Query {
                     conditionTokens.length ? conditionTokens.join(' ') : 'true'
                 }
                 ${ limit === null ? '' : 
-                    `limit $${ this.conditionValues.length + 1 }` 
+                    `limit $${ conditionValues.length + 1 }` 
                 }
                 ${ !orderComponents ? '' : (
                     `order by ${ orderComponents.map(o => (
-                        Object.keys(o)[0] + ' ' + Object.values(o)[0]
-                    )) }`.join(', ')
+                        o[0] + ' ' + o[2]
+                    )).join(', ') }`
                 ) };
-        `, [...this.conditionValues, ...(limit ? [limit] : [])]);
+        `, [...conditionValues, ...(limit ? [limit] : [])]);
         
         //  Resolve each row into a model and return the result.
         return rows.map(r => this.session._resolveModel(this.M, r));
@@ -456,6 +518,13 @@ class Session {
     *   set. This method is leveraged by relationship proxies.
     */
     async _emitOneUpdate(model) {
+        //  We first need to assert that all foreign keys present on the
+        //  given model are assigned a value. Note we rely on the in-database
+        //  diagnostic in the case that they are assigned a cosmetically
+        //  correct but insane value. This check only applies to ephemeral
+        //  models as we hold non-impedance for loaded models invariant.
+        assertRelationalAttributesValidForModels([model]);
+
         const {_schema: {collection, pkAttribute}} = model.constructor,
             dirtyKeys = Object.keys(model._dirty);
 
@@ -517,13 +586,21 @@ class Session {
     */
     async add(...models) {
         //  Assert session state is okay.
-        if (this.cursor && !this.transacting) {
-            throw new SessionStateError('No transaction');
-        }
+        if (this.cursor && !this.transacting) throw new SessionStateError(
+            'No transaction'
+        );
 
-        //  Topologically sort model set.
+        //  Topologically sort model set. This also extends the model set to
+        //  include models referenced via relations.
         let modelCreations = orderEphemeralModelsByRelationshipIntent(
             models
+        );
+
+        //  Assert that all relational attributes are assigned valid values
+        //  within the creation set, since we don't enforce constraints on
+        //  those eagerly in the case of ephemeral models.
+        assertRelationalAttributesValidForModels(
+            modelCreations.map(({model}) => model)
         );
 
         //  Iterate each provided model, inserting and registering it.
@@ -535,17 +612,13 @@ class Session {
 
             //  Assert the model belongs to the same database as this session.
             if (this.database._getModel(collection) !== model.constructor) {
-                throw new ModelStateError(
-                    `${ model.toString() } is a foreign model`
-                );
+                throw new ModelStateError(`${ model } is a foreign model`);
             }
 
             //  Assert this model isn't loaded somewhere else.
-            if (_session && _session != this) {
-                throw new ModelStateError(
-                    `${ model.toString() } belongs to another session`
-                );
-            }
+            if (_session && _session != this) throw new ModelStateError(
+                `${ model } belongs to another session`
+            );
 
             //  Comprehend which attributes have and don't have values. These
             //  are written to and read from the insert, respectively (as the
@@ -556,11 +629,6 @@ class Session {
                 model[attr] === null
             ));
 
-            //  Register this model with this session.
-            const stateKey = stateKeyForModelRow(model.constructor, model);
-            this.state[stateKey] = model;
-            model._session = this;
-
             //  Fire pre-storage model lifecycle hook.
             model.modelWillStore();
 
@@ -570,7 +638,7 @@ class Session {
                 insert into ${ collection }
                     ( ${ writeAttributes.join(', ') } )
                     values
-                    ( ${ writeAttributes.map((a, i) => '$' + (i + 1)) })
+                    ( ${ writeAttributes.map((a, i) => '$' + (i + 1)) } )
                 ${ readAttributes.length > 0 ? 
                     `returning ${ readAttributes.join(', ') }`
                     :
@@ -594,6 +662,14 @@ class Session {
                 ));
                 model._setAttributeProxyStates({dirtying: true});
             }
+            
+            //  Register this model with this session.
+            const stateKey = stateKeyForModel(model);
+            this.state[stateKey] = model;
+            model._session = this;
+
+            model._bindIntents = [];
+            model._inboundBindIntents = [];
 
             //  Fire post-storage model lifecycle hook.
             model.modelDidStore();
@@ -614,22 +690,92 @@ class Session {
         for (let i = 0; i < models.length; i++) {
             const model = models[i],
                 {_schema: {collection, pkAttribute}} = model.constructor,
-                stateKey = stateKeyForModelRow(model.constructor, model);
+                stateKey = stateKeyForModel(model);
 
             //  Assert this model is in fact loaded by this session.
-            if (!(stateKey in this.state)) {
-                throw new ModelStateError(
-                    `${ Model.toString() } isn't present in session it was 
-                    deleted from
-                `.replace(/\s+/g, ' '));
-            }
+            if (!(stateKey in this.state)) throw new ModelStateError(
+                `${ model } isn't present in session it was deleted from`
+            );
+
+            //  If this deletion has any side effects on loaded relationships,
+            //  discover and apply those.
+            const relationProxies = relationProxiesAttachedTo(model, true),
+                involvedModelsToUpdate = [];
+            Object.values(relationProxies).forEach(relation => {
+                const oneSide = relation instanceof OneRelationProxy;
+
+                if (oneSide) {
+                    //  Handle the remote side if this relation is loaded. Note
+                    //  the remote side cannot be loaded without this side
+                    //  being loaded too, so we're guarenteed to make the
+                    //  the update if applicable (since this is a one-side).
+                    if (relation.loaded) {
+                        //  Retrieve the related model.
+                        const relatedModel = relation.get();
+
+                        //  If there is a model across this relationship,
+                        //  update its remote side if there is one loaded.
+                        if (relatedModel) {
+                            const remoteSide = relation.findRemoteSideOn(
+                                relatedModel
+                            );
+
+                            if (remoteSide.loaded) {
+                                remoteSide._removeAsSideEffect(model);
+                            }
+                        }
+                    }
+                    
+                    //  Clear the near-side of this relation.
+                    relation._setAsSideEffect(null, true);
+                    model[relation.sourceAttribute] = null;
+                }
+                else {
+                    //  This is a many-side relation.
+
+                    //  Assert this relation is loaded. If it isn't, we can't
+                    //  update the foreign keys of its members so this
+                    //  operation is impossible.
+                    if (!relation.loaded) throw new ModelStateError(
+                        'Deleted model has unloaded many-side relation'
+                    );
+
+                    //  Retrieve the set of related models.
+                    const relatedModels = relation.get();
+                    
+                    //  XXX: Some list manipulation is unnessesarily per-item.
+                    relatedModels.forEach(relatedModel => {
+                        //  Remove this model from the near side.
+                        relation._removeAsSideEffect(relatedModel);
+
+                        //  Find the remote side if it exists.
+                        const remoteSide = relation.findRemoteSideOn(
+                            relatedModel
+                        );
+                        //  Clear the remote side on the related model and its
+                        //  foreign key. Note it's guarenteed to be loaded 
+                        //  since this (its corresponsing many-side) is.
+                        if (remoteSide) remoteSide._setAsSideEffect(null);
+                        relatedModel[relation.sourceAttribute] = null;
+
+                        //  Mark this model for update.
+                        involvedModelsToUpdate.push(relatedModel);
+                    });
+                }
+            });
 
             //  Remove the model from this sessions internal state.
             delete this.state[stateKey];
             //  Remove the session from the model and write-lock it.
             model._session = null;
+            model._bound = false;
             model._setAttributeProxyStates({writable: false});
 
+            //  XXX: This emission should be batched.
+            //  Emit updates of models involved via relationships.
+            for (let j = 0; j < involvedModelsToUpdate.length; j++) {
+                await this._emitOneUpdate(involvedModelsToUpdate[j]);    
+            }
             //  Emit the deletion SQL.
             await this.emit(`
                 delete from ${ collection }

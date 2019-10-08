@@ -1,6 +1,5 @@
 /**
-*   sago is an opinionated mini-ORM for PostgreSQL. It's designed for
-*   practical use, minimum abstraction, and low complexity.
+*   sago is a mini-ORM for PostgreSQL.
 */
 const cli = require('./cli');
 const { createDatabase } = require('./database');
@@ -19,7 +18,7 @@ module.exports = (expose => {
     });
 
     return sago;
-})({Model, ...require('./errors') });
+})({ Model, ...require('./errors') });
 
 //  Maybe run the CLI.
 if (require.main == module) cli();

@@ -1,6 +1,6 @@
-const { AttributeTypeError, ModelStateError, AttributeValueError } = require('sago');
+const { AttributeTypeError, RelationalAttributeError, ModelStateError, AttributeValueError } = require('sago');
 
-const { IngredientType } = require('../model');
+const { IngredientType, IngredientItem } = require('../model');
 
 const testSingleModel = async (database, test) => {
     let session = database.session();
@@ -40,6 +40,7 @@ const testSingleModel = async (database, test) => {
 
     const id = loadedFish.id;
 
+    await loadedFish.members.get(); // We need to load many-side relations before delete for now.
     await session.delete(loadedFish);
     await test.assertThrows('Post-delete write lock', ModelStateError, () => {
         otherFish.name = 'cool';

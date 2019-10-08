@@ -29,7 +29,7 @@ class Recipe extends Model {
         last_cooked_at: ['datetime', {default: 'now()', nullable: true}]
     };
 
-    get ingredient_items() { return this.manyRelation('ingredient_items') }
+    get ingredient_items() { return this.manyRelation(IngredientItem, {order: {quantity: 'desc'}}); }
 
     async cook() {
         this.last_cooked_at = new Date();
@@ -46,8 +46,8 @@ class IngredientItem extends Model {
     collection = 'ingredient_items';
     schema = {
         id: ['uuid', {pk: true}],
-        recipe_id: ['uuid', {fk: 'recipes.id', nullable: true}],
-        ingredient_id: ['uuid', {fk: 'ingredients.id', nullable: true}],
+        recipe_id: ['uuid', {fk: 'recipes.id'}],
+        ingredient_id: ['uuid', {fk: 'ingredients.id'}],
         quantity: ['string', {length: 30}],
     };
 

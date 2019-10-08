@@ -15,7 +15,7 @@ const resolveOneHotAttributeReference = (object, attributes) => {
     const keys = Object.keys(object);
 
     return (keys.length == 1) && (keys[0] in attributes) && (
-        [keys[0], attributes[keys[0]]]
+        [keys[0], attributes[keys[0]], object[keys[0]]]
     );
 }
 

@@ -36,7 +36,7 @@ class AssertionSet {
         console.log(name);
         try {
             const result = callable();
-            if (result instanceof Promise) await result();
+            if (result instanceof Promise) await result;
 
             this.fail();
         }
@@ -50,7 +50,7 @@ class AssertionSet {
         console.log(name);
         try {
             let result = callable();
-            if (result instanceof Promise) result = await result();
+            if (result instanceof Promise) result = await result;
 
             if (result === returnValue) this.pass();
             else this.fail();

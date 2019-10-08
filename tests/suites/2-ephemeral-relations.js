@@ -1,8 +1,8 @@
-const { ImmutableError } = require('sago');
+const { ImmutableError, RelationalAttributeError } = require('sago');
 
 const { IngredientType, Ingredient, IngredientItem, Recipe } = require('../model');
 
-const testSimpleRelations = async (database, test) => {
+const testEphemeralRelations = async (database, test) => {
     const fish = new IngredientType({name: 'fish'});
     const trout = new Ingredient({name: 'trout'});
 
@@ -13,6 +13,7 @@ const testSimpleRelations = async (database, test) => {
     test.assertTrue('Local assignment to one-side proxy', trout.type.get() == fish);
 
     test.assertTrue('Remote value after assignment to one-side proxy', (
+        !(fish.members.get() instanceof Promise) &&
         fish.members.get().length === 1 &&
         fish.members.get()[0] == trout
     ));
@@ -53,7 +54,7 @@ const testSimpleRelations = async (database, test) => {
 
     const twoSalmon = new IngredientItem({quantity: '2 whole fish', recipe: fishDinner, ingredient: salmon});
 
-    await test.assertNoError("Deep relationship write from top node doesn't error", async () => {
+    await test.assertNoError("Valid deep relationship write from top node doesn't error", async () => {
         await session.add(twoSalmon);
     });
 
@@ -64,6 +65,15 @@ const testSimpleRelations = async (database, test) => {
     ));
 
     await session.commit();
+
+    await session.begin();
+
+    const salad = new Recipe({name: 'salad'});
+    const twoTomatoes = new IngredientItem({quantity: '2', recipe: salad});
+
+    await test.assertThrows('Invalid deep relationship write from top node errors', RelationalAttributeError, async () => {
+        await session.add(twoTomatoes);
+    });
 };
 
-module.exports = testSimpleRelations;
+module.exports = testEphemeralRelations;

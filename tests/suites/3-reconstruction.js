@@ -18,6 +18,8 @@ const testReconstruction = async (database, test) => {
     test.assertTrue('Async loads return sane value', (
         (await loadOp)[0] == fishDinner.ingredient_items.get()[0]
     ));
+
+    await session.close();
 };
 
 module.exports = testReconstruction;
