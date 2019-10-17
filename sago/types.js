@@ -44,6 +44,10 @@ class AttributeType {
         this.options = {};
     }
 
+    get fkAttributeReference() { return this.options.fk || null; }
+
+    get isNullable() { return this.options.nullable; }
+
     /**
     *   Store and allow inheritors to process the options for this type
     *   definition, as supplied in a model schema. Chainable.

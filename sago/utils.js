@@ -1,23 +1,46 @@
 /**
 *   Miscellaneous internal utility definitions.  
 */
-const { ImmutableError } = require('./errors');
+const { ImmutableError, ModelStateError } = require('./errors');
 
 //  XXX: Shouldn't exist.
 
-/**
-*   If the given object is a one-hot object whose key refers to an attribute in
-*   the supplied attribute map, return a key, attribute type definition pair.
-*   Otherwise return false.
-*/
-const resolveOneHotAttributeReference = (object, attributes) => {
-    if (typeof object != 'object') return false;
-    const keys = Object.keys(object);
+const getInstanceKeys = (object, OfClass=null) => (
+    Object.getOwnPropertyNames(object.constructor.prototype).filter(name => (
+        !OfClass || object[name] instanceof OfClass
+    ))
+);
 
-    return (keys.length == 1) && (keys[0] in attributes) && (
-        [keys[0], attributes[keys[0]], object[keys[0]]]
-    );
+const getInstanceValues = (object, OfClass=null) => (
+    getInstanceKeys(object, OfClass).map(key => object[key])
+);
+
+const getInstanceItems = (object, OfClass=null) => (
+    getInstanceKeys(object, OfClass).map(key => ({key, value: object[key]}))
+);
+
+const assertModelsShareSession = (...models) => {
+    const existant = models.map(model => model._session).filter(b => b)[0] || null;
+
+    models.forEach(model => {
+        //  XXX: can also happen if one model is only added but the session isn't created.
+        if (model._session && model._session != existant) throw new ModelStateError(
+            'One or more models are in different session'
+        );
+    });
 }
+
+/**
+*   Define the set of attributes (really properties, but this packaging seems
+*   good) as being non-enumerable on the given model. 
+*/
+const hideProperties = (model, ...attributes) => {
+    Object.defineProperties(model, attributes.reduce((map, property) => {
+        map[property] = {enumerable: false, writable: true};
+        return map;
+    }, {}));
+};
+
 
 /**
 *   Write-lock an array. 
@@ -34,5 +57,13 @@ const writeLockArray = (array, errorMessage) => {
     return array;
 };
 
+const uniqueElements = array => array.filter((item, i) => array.indexOf(item) == i);
+
+class SideEffectAssignment {
+    constructor(value) {
+        this.value = value;
+    }
+}
+
 //  Exports.
-module.exports = { resolveOneHotAttributeReference, writeLockArray };
+module.exports = { SideEffectAssignment, uniqueElements, writeLockArray, getInstanceKeys, getInstanceItems, getInstanceValues, assertModelsShareSession, hideProperties };

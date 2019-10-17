@@ -12,9 +12,8 @@ const testRelationOrdering = async (database, test) => {
 
     const session = database.session();
 
-    await session.add(gardenSalad);
+    session.add(gardenSalad);
     await session.commit();
-    await session.begin();
 
     const checkOrder = (source, expect) => source.filter((o, i) => (
         o == expect[i]
@@ -32,7 +31,7 @@ const testRelationOrdering = async (database, test) => {
         twoBrocolli, sixArugula, aRadish
     ]));
 
-    const nothing = await (new IngredientItem({quantity: 'zero'})).setRelations({ingredient: brocolli, recipe: gardenSalad});
+    const nothing = new IngredientItem({quantity: 'zero', ingredient: brocolli, recipe: gardenSalad});
 
     await session.add(nothing);
 

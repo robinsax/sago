@@ -46,7 +46,7 @@ const testEphemeralRelations = async (database, test) => {
 
     test.assertTrue('In-memory sorting of many-side proxies', fish.members.get()[0] == salmon);
 
-    await test.assertThrows('Retrieved many-side view is immutable', ImmutableError, () => {
+    test.assertThrows('Retrieved many-side view is immutable', ImmutableError, () => {
         fish.members.get().pop();
     });
 
@@ -54,9 +54,11 @@ const testEphemeralRelations = async (database, test) => {
 
     const twoSalmon = new IngredientItem({quantity: '2 whole fish', recipe: fishDinner, ingredient: salmon});
 
-    await test.assertNoError("Valid deep relationship write from top node doesn't error", async () => {
-        await session.add(twoSalmon);
+    test.assertNoError("Valid deep relationship write from top node doesn't error", () => {
+        session.add(twoSalmon);
     });
+
+    await session.commit();
 
     test.assertTrue('Deep relationship write assigns IDs and FKs', (
         fishDinner.id && twoSalmon.recipe_id == fishDinner.id &&
@@ -64,16 +66,14 @@ const testEphemeralRelations = async (database, test) => {
         fish.id && salmon.type_id == fish.id
     ));
 
-    await session.commit();
-
-    await session.begin();
-
     const salad = new Recipe({name: 'salad'});
     const twoTomatoes = new IngredientItem({quantity: '2', recipe: salad});
 
-    await test.assertThrows('Invalid deep relationship write from top node errors', RelationalAttributeError, async () => {
-        await session.add(twoTomatoes);
+    test.assertThrows('Invalid deep relationship write from top node errors', RelationalAttributeError, () => {
+        session.add(twoTomatoes);
     });
+
+    await session.close();
 };
 
 module.exports = testEphemeralRelations;

@@ -8,7 +8,8 @@ const {
 const { 
     OneRelationProxy, ManyRelationProxy, RelationProxy 
 } = require('./relations');
-const { attachAttributeProxies, hideAttributes } = require('./attributes');
+const { attachAttributeProxies } = require('./attributes');
+const { hideProperties } = require('./utils');
 
 /**
 *   Generate if nessesary and return an relation proxy of the given class,
@@ -39,36 +40,6 @@ const resolveRelationProxyWithCache = (
 }
 
 /**
-*   Register a relationship-building foreign key assignment with an ephemeral
-*   model. This would be more logically implemented as a method of `Model`, but
-*   we don't want to expose it.
-*
-*   The relationship proxy treats this operation as eqivalent to actually
-*   forming the relationship.
-*/
-const registerRelationshipIntentOnEphemeral = (
-    host, target, sourceAttribute, destinationAttribute, reverse=false
-) => {
-    const holder = reverse ? target : host,
-        other = reverse ? host : target;
-
-    //  Ensure this intent doesn't already exist.
-    if (holder._bindIntents.filter(i => (
-        target == i.target && sourceAttribute == i.sourceAttribute &&
-        destinationAttribute == i.destinationAttribute
-    )).length > 0) return;
-
-    //  Register the coupling to be performed on bind. This will involve first
-    //  creating the target model, then assigning it's ID to the foreign key
-    //  attribute of the host.
-    holder._bindIntents.push({target: other, sourceAttribute, destinationAttribute, reverse});
-    //  Also register the opposite direction to support automatically adding
-    //  models on the one-side of a relation when their many-side counterpart
-    //  is added.
-    other._inboundBindIntents.push(holder);
-}
-
-/**
 *   The base model class implements a constructor which should not be
 *   overridden, placeholder lifecycle hooks, helpers for creating relation
 *   proxies, and methods for performing serialization, update assignment, and 
@@ -95,7 +66,7 @@ class Model {
     *   given object should contain only attributes in the schema of this
     *   model, extraneous keys will result in an `AttributeError`.
     */
-    constructor(sourceObject=null, reconstruction=false) {
+    constructor(sourceObject=null, _session=null) {
         const {_schema} = this.constructor;
         //  The schema parser will instantiate models to read their class
         //  fields. If there is no schema assigned to this model class yet,
@@ -106,19 +77,21 @@ class Model {
             delete this.collection;
 
             //  Set up model machinery.
-            hideAttributes(this, ...[
+            hideProperties(this, ...[
                 '_session', '_relationCache', '_setAttributeProxyStates',
-                '_dirty', '_bound', '_bindIntents', '_inboundBindIntents'
+                '_dirty', '_relationshipIntents',
+                '_inboundRelationshipIntentModels'
             ]);
             this._setAttributeProxyStates = attachAttributeProxies(
                 this, _schema
             );
-            this._bound = reconstruction;
             this._dirty = {};
-            this._session = null;
             this._relationCache = {};
-            this._bindIntents = reconstruction ? null : [];
-            this._inboundBindIntents = reconstruction ? null : [];
+            this._session = _session;
+            //  TODO: Make somewhat conditional.
+            this._relationshipIntents = [];
+            this._inboundRelationshipIntentModels = [];
+            this._ephemeralRelations = [];
             
             //  Maybe copy attributes from the supplied source object.
             if (sourceObject) {
@@ -132,12 +105,8 @@ class Model {
                         this[key] = sourceObject[key];
                     }
                     else if (this[key] instanceof OneRelationProxy) {
-                        //  Assign one-side relation proxies if it's able to
-                        //  happen synchronously.
-                        const result = this[key].set(sourceObject[key]);
-                        if (result instanceof Promise) throw new ModelStateError(
-                            'Cannot join relationship synchronously'
-                        );
+                        //  Assign one-side relation proxies.
+                        this[key].set(sourceObject[key]);
                     }
                     else throw new AttributeKeyError(key);
                 });
@@ -299,6 +268,9 @@ class Model {
                         })
                     ))).then(list => [includeKey, list]);
                 }
+                else if (!value) {
+                    return [includeKey, null];
+                }
                 else {
                     //  Value is a single model.
                     return new Promise(resolve => {
@@ -319,32 +291,6 @@ class Model {
             
             return maybeStringify(result);
         });
-    }
-
-    async setRelations(relations) {
-        if (this._bound) throw new ModelStateError(
-            'Cannot use setRelations() on row-bound model'
-        );
-
-        const keys = Object.keys(relations);
-        if (keys.length == 0) return;
-
-        keys.forEach(key => {
-            if (!relations[key]._bound) throw new ModelStateError(
-                'Only row-bound models can be coupled with setRelations()'
-            );
-
-            const relationProxy = this[key];
-
-            if (!(relationProxy instanceof OneRelationProxy)) throw new Error(
-                'setRelations only supports one-side assignment'
-            );
-
-            relationProxy.set(relations[key], true);
-        });
-
-        await relations[keys[0]]._session.add(this);
-        return this;
     }
 
     /**
@@ -423,6 +369,4 @@ class Model {
 }
 
 //  Exports.
-module.exports = { 
-    Model, registerRelationshipIntentOnEphemeral 
-};
+module.exports = { Model };

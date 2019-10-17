@@ -12,6 +12,8 @@ const { Pool } = require('pg');
 const { DEFAULT_TYPE_ALIAS_MAP, DEFAULT_TYPE_MAP } = require('./types');
 const { SchemaError } = require('./errors');
 const { Session } = require('./session');
+const { Model } = require('./model');
+const { AttributeIdentity, attachAttributeIdentities } = require('./attributes');
 
 //  Define a master table of all defined databases.
 const databases = {};
@@ -74,6 +76,10 @@ class ModelSchema {
             }).join(',\n\t')
         }\n);`;
     }
+
+    toString() {
+        return this.collection;
+    }
 }
 
 class Database {
@@ -127,8 +133,49 @@ class Database {
     /**
     *   Return the model class for the given collection nam or null.
     */
-    _getModel(collectionName) {
-        return this.models[collectionName] || null;
+    _getM(collection, orDie=false) {
+        if (orDie && !(collection in this.models)) throw new SchemaError(
+            `No collection ${ collection } in database ${ this.name }`
+        );
+        
+        return this.models[collection] || null;
+    }
+
+    _collectionReferenceToM(reference) {
+        //  If the reference is already a model class simply return it.
+        if (reference.prototype instanceof Model) {
+            //  ...but first assert it belongs to this database.
+            const localM = this._getM(reference._schema.collection);
+            if (localM != reference) throw new SchemaError(
+                `Foreign model ${ reference._schema }`
+            )
+
+            return reference;
+        }
+
+        //  Assert the reference is otherwise a string.
+        if (typeof reference != 'string') throw new SchemaError(
+            'Collection reference must be Model subclass or collection name'
+        );
+
+        //  Resolve the model class from the registry or die.
+        return this._getM(reference, true);
+    }
+
+    _attributeReferenceToIdentity(reference) {
+        if (reference instanceof AttributeIdentity) return reference;
+
+        const [collectionReference, attribute] = reference.split('.');
+        if (!attribute) throw new SchemaError(
+            `Invalid attribute reference ${ reference }`
+        );
+
+        const M = this._collectionReferenceToM(collectionReference);
+        
+        if (!(attribute in M._schema.attributes)) throw new SchemaError(
+            `${ M._schema } has no attribute ${ attribute }`
+        );
+        return M[attribute];
     }
 
     /**
@@ -154,6 +201,8 @@ class Database {
         //  Comprehend schema and store as a protected attribute on the model
         //  class.
         M._schema = ModelSchema.fromTemplate(this, M.collection, M.schema);
+        //  Attach attribute identities.
+        attachAttributeIdentities(M, M._schema);
 
         //  Add this model class to the registry.
         this.models[M.collection] = M;

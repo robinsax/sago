@@ -1,7 +1,6 @@
 /**
 *   sago is a mini-ORM for PostgreSQL.
 */
-const cli = require('./cli');
 const { createDatabase } = require('./database');
 const { Model } = require('./model');
 
@@ -21,4 +20,4 @@ module.exports = (expose => {
 })({ Model, ...require('./errors') });
 
 //  Maybe run the CLI.
-if (require.main == module) cli();
+if (require.main == module) require('./cli')();

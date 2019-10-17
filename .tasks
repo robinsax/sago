@@ -1,5 +1,6 @@
-fk assignment side effect on relationships
-fk attribute checks should check for existance on loaded models
 assert deep serialization config shape
-remove invokeHooks pattern
 repackage
+cycle handling for topo ordering
+switch attribute map in schema to identities
+topo sort deletions
+changing pk handling

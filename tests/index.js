@@ -14,6 +14,8 @@ const test = new AssertionSet();
 
 if (require.main == module) {
     (async () => {
+        Error.stackTraceLimit = 100;
+
         const suites = fs.readdirSync(__dirname + '/suites');
 
         for (let i = 0; i < suites.length; i++) {

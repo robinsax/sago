@@ -2,6 +2,8 @@
 *   Attribute proxy machinery and other model attribute utilities. 
 */
 const { ModelStateError } = require('./errors');
+const { OneRelationProxy } = require('./relations');
+const { SideEffectAssignment } = require('./utils');
 
 /**
 *   Attach an attribute proxy to the given model for each attribute in the
@@ -22,15 +24,12 @@ const attachAttributeProxies = (model, schema) => {
     });
 }
 
-/**
-*   Define the set of attributes (really properties, but this packaging seems
-*   good) as being non-enumerable on the given model. 
-*/
-const hideAttributes = (model, ...attributes) => {
-    Object.defineProperties(model, attributes.reduce((map, property) => {
-        map[property] = {enumerable: false, writable: true};
-        return map;
-    }, {}));
+const attachAttributeIdentities = (M, schema) => {
+    schema.identities = {};
+    Object.keys(schema.attributes).forEach(attribute => {
+        const identity = new AttributeIdentity(M, attribute, schema.attributes[attribute]);
+        M[attribute] = schema.identities[attribute] = identity;
+    });
 };
 
 /**
@@ -67,6 +66,9 @@ class AttributeProxy {
     //  Implement the property definition schema.
     get() { return this._value; }
     set(newValue) {
+        const asSideEffect = newValue instanceof SideEffectAssignment;
+        if (asSideEffect) newValue = newValue.value;
+
         //  Ensure the parent model hasn't been write-locked after a delete
         //  operation.
         if (!this.writable) throw new ModelStateError('Model deleted');
@@ -91,7 +93,37 @@ class AttributeProxy {
             this.model._dirty[this.attribute] = this._value;
         }
 
-        //  TODO: Relational side-effects.
+        if (this.type.fkAttributeReference && !asSideEffect) {
+            const session = this.model._session;
+
+            //  This is a foreign key, we need to apply side effects.
+            const identity = this.model.constructor._schema.database._attributeReferenceToIdentity(
+                this.type.fkAttributeReference
+            );
+
+            const proxy = OneRelationProxy.findOnModel(this.model, identity.M, identity.attribute);
+            if (proxy && proxy.loaded) {
+                //  XXX: Assumes the destination is a PK.
+                //  Note this will not find ephemeral models since they don't even have an ID.
+
+                const newFriendStateKey = [identity.M._schema.collection, newValue].join('_');
+                
+                //  Discover the model the new value being assigned is referencing.
+                const newFriend = session.state[newFriendStateKey];
+                if (newFriend) {
+                    //  The new friend model is loaded, we can update this relationship.
+                    proxy.set(newFriend);
+
+                    //  We return because the set operation is going to come back here as a side effect assignment.
+                    return;
+                }
+                else {
+                    //  The new friend model isn't loaded, unload the relation.
+
+                    proxy._forceUnload();
+                }
+            }
+        }
         
         //  Update the value and return.
         return this._value = newValue;
@@ -116,5 +148,13 @@ class AttributeProxy {
     }
 }
 
+class AttributeIdentity {
+    constructor(M, attribute, type) {
+        this.M = M;
+        this.type = type;
+        this.attribute = attribute;
+    }
+}
+
 //  Exports.
-module.exports = { attachAttributeProxies, hideAttributes };
+module.exports = { attachAttributeProxies, attachAttributeIdentities, AttributeIdentity };
