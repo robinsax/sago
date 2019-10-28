@@ -1,69 +1,68 @@
 /**
-*   Miscellaneous internal utility definitions.  
+*   Miscellaneous internal utilities for general object manipulation, as well
+*   as architectural components that need root-level packaging.
 */
-const { ImmutableError, ModelStateError } = require('./errors');
 
-//  XXX: Shouldn't exist.
+//  XXX: This packaging.
+/**
+*   A sentinel wrapper-class used by relation management machinery to prevent
+*   foreign key attribute proxies from performing relation management side-
+*   effects upon assignment (since the assignment itself is a side-effect).
+*/
+class _SideEffectAttributeAssignment {
+    constructor(value) {
+        this.value = value;
+    }
+}
 
+/**
+*   Return all keys defined by the prototype of the given object, optionally
+*   filtering to keys whose values are of the given class. 
+*/
 const getInstanceKeys = (object, OfClass=null) => (
     Object.getOwnPropertyNames(object.constructor.prototype).filter(name => (
         !OfClass || object[name] instanceof OfClass
     ))
 );
 
+/**
+*   Return all values for keys defined by the prototype of the given object,
+*   optionally filtering to values of the given class. 
+*/
 const getInstanceValues = (object, OfClass=null) => (
     getInstanceKeys(object, OfClass).map(key => object[key])
 );
 
+/**
+*   Return a key, value pair object for each key defined by the prototype of
+*   the given object, optionally filtering to items whose values are of the
+*   given class. 
+*/
 const getInstanceItems = (object, OfClass=null) => (
     getInstanceKeys(object, OfClass).map(key => ({key, value: object[key]}))
 );
 
-const assertModelsShareSession = (...models) => {
-    const existant = models.map(model => model._session).filter(b => b)[0] || null;
-
-    models.forEach(model => {
-        //  XXX: can also happen if one model is only added but the session isn't created.
-        if (model._session && model._session != existant) throw new ModelStateError(
-            'One or more models are in different session'
-        );
-    });
-}
-
 /**
-*   Define the set of attributes (really properties, but this packaging seems
-*   good) as being non-enumerable on the given model. 
+*   Define the given set of properties as non-enumerable on the given object.
 */
-const hideProperties = (model, ...attributes) => {
-    Object.defineProperties(model, attributes.reduce((map, property) => {
-        map[property] = {enumerable: false, writable: true};
-        return map;
-    }, {}));
+const defineHiddenProperties = (object, properties) => {
+    const definitions = Object.keys(properties).reduce((result, property) => (
+        {...result, [property]: {
+            enumerable: false, writable: true, value: properties[property]
+        }}
+    ), {});
+    Object.defineProperties(object, definitions);
 };
 
-
 /**
-*   Write-lock an array. 
+*   Return a version of the given array that contains only unqiue elements. 
 */
-const writeLockArray = (array, errorMessage) => {
-    const preventMutation = () => {
-        throw new ImmutableError(errorMessage);
-    }
-
-    array.push = preventMutation;
-    array.pop = preventMutation;
-    array.splice = preventMutation;
-
-    return array;
-};
-
-const uniqueElements = array => array.filter((item, i) => array.indexOf(item) == i);
-
-class SideEffectAssignment {
-    constructor(value) {
-        this.value = value;
-    }
-}
+const uniqueElements = array => array.filter((item, i) => (
+    array.indexOf(item) == i
+));
 
 //  Exports.
-module.exports = { SideEffectAssignment, uniqueElements, writeLockArray, getInstanceKeys, getInstanceItems, getInstanceValues, assertModelsShareSession, hideProperties };
+module.exports = { 
+    _SideEffectAttributeAssignment, uniqueElements, getInstanceKeys,
+    getInstanceItems, getInstanceValues, defineHiddenProperties
+};

@@ -1,4 +1,4 @@
-const { ImmutableError, RelationalAttributeError } = require('sago');
+const { RelationalAttributeError } = require('sago');
 
 const { IngredientType, Ingredient, IngredientItem, Recipe } = require('../model');
 
@@ -46,10 +46,6 @@ const testEphemeralRelations = async (database, test) => {
 
     test.assertTrue('In-memory sorting of many-side proxies', fish.members.get()[0] == salmon);
 
-    test.assertThrows('Retrieved many-side view is immutable', ImmutableError, () => {
-        fish.members.get().pop();
-    });
-
     const fishDinner = new Recipe({name: 'fish dinner'});
 
     const twoSalmon = new IngredientItem({quantity: '2 whole fish', recipe: fishDinner, ingredient: salmon});
@@ -69,11 +65,14 @@ const testEphemeralRelations = async (database, test) => {
     const salad = new Recipe({name: 'salad'});
     const twoTomatoes = new IngredientItem({quantity: '2', recipe: salad});
 
-    test.assertThrows('Invalid deep relationship write from top node errors', RelationalAttributeError, () => {
-        session.add(twoTomatoes);
-    });
+    session.add(twoTomatoes);
+    await test.assertThrows('Invalid deep relationship write from top node errors', RelationalAttributeError, () => (
+        session.commit()
+    ));
 
-    await session.close();
+    session.delete(salad, twoTomatoes);
+    await session.commit({close: true});
+
 };
 
 module.exports = testEphemeralRelations;

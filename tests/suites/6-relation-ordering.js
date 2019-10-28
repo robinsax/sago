@@ -33,7 +33,7 @@ const testRelationOrdering = async (database, test) => {
 
     const nothing = new IngredientItem({quantity: 'zero', ingredient: brocolli, recipe: gardenSalad});
 
-    await session.add(nothing);
+    session.add(nothing);
 
     test.assertTrue('Desc. re-order correct', checkOrder(gardenSalad.ingredient_items.get(), [
         nothing, twoBrocolli, sixArugula, aRadish

@@ -27,6 +27,7 @@ const testSerialization = async (database, test) => {
             }]
         ]});
     });
+    console.log(JSON.stringify(serialized, null, 4));
     test.assertTrue('Serialization has good shape', (
         serialized && serialized.ingredient_items instanceof Array &&
         serialized.ingredient_items[1].ingredient &&

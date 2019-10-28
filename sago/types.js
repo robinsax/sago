@@ -2,22 +2,20 @@
 *   Model attribute type machinery and stock type definitions. Custom types
 *   are specified during database creation, and must subclass `AttributeType`.
 *
-*   Types are invoked during attribute value lifecycle as well as during
-*   model serialization and de-serialization. They are also responsible for
-*   authoring their own definitions in SQL.
+*   Types are invoked during attribute value lifecycle as well as value
+*   serialization and de-serialization. There is one instance of an attribute
+*   type for each attribute of each model.
 *
-*   Types aren't referenced directly during schema definitions, so this module
-*   isn't directly exposed from the package index.
-*
-*   There is one instance of an `AttributeType` for each attribute of each
-*   model.
+*   Note that when defining model class schemas, types are not created
+*   directly, but are instead referenced and configured with template data
+*   structures.
 */
-const { AttributeTypeError, AttributeValueError, SchemaError } = require('./errors');
+const { AttributeTypeError, AttributeValueError } = require('./errors');
 
-//  Define the pattern used to validate UUID strings.
+//  The pattern used to validate UUID strings.
 const UUID_PATTERN = /^[0-9a-f-]{36}|[0-9a-f]{32}$/;
-//  Define the stock mappings used to associate type references in schema
-//  definitions to actual attribute types.
+//  The stock mappings used to associate type references in schema definitions
+//  to actual attribute types.
 const DEFAULT_TYPE_ALIAS_MAP = {
     bool: 'boolean',
     int: 'integer'
@@ -31,30 +29,64 @@ const DEFAULT_TYPE_MAP = {
     datetime: () => new DatetimeAttributeType()
 };
 
+//  XXX: Eagerly comprehend and validate options.
 /**
-*   The base attribute type class. Functional for primitive types without
+*   The base attribute type class. Functional for "primitive" types without
 *   inheritance.
 */
 class AttributeType {
     constructor(nativeType, dbType) {
         this.nativeType = nativeType;
         this.dbType = dbType;
+        this.database = null;
 
         //  Options are applied later.
         this.options = {};
     }
 
-    get fkAttributeReference() { return this.options.fk || null; }
-
+    /**
+    *   Whether or not attributes of this type are nullable. 
+    */
     get isNullable() { return this.options.nullable; }
+
+    /**
+    *    Whether or not this attribute type defines a foreign key.
+    */
+    get isForeignKey() { return !!this.options.fk; }
+    
+    /**
+    *   Whether or not this attribute type defines a primary key. 
+    */
+    get isPrimaryKey() { return this.options.pk; }
+
+    /**
+    *   SQL defining the in-database default value for this type. 
+    */
+    get dbDefaultValue() { return this.options.default || null; }
+
+    /**
+    *   The identity of the destination attribute for this foreign key
+    *   attribute type. Should only be accessed if this attribute type
+    *   is known to define a foreign key.
+    */    
+    get foreignKeyDestinationIdentity() {
+        //  Assert this type defines a foreign key.
+        if (!this.isForeignKey) throw new Error(
+            `${ this } isn't a foreign key (this may be a bug is sago)`
+        );
+
+        //  Resolve the attribute reference for this foreign key.
+        return this.database._attributeReferenceToIdentity(this.options.fk);
+    }
 
     /**
     *   Store and allow inheritors to process the options for this type
     *   definition, as supplied in a model schema. Chainable.
     */
-    takeOptions(options) {
+    _afterConstruction(database, options) {
+        this.database = database;
         this.options = options;
-        this.resolveDefinition();
+        this.attributeTypeDidConstruct();
         return this;
     }
 
@@ -62,13 +94,13 @@ class AttributeType {
     *   A lifecycle hook inheritors can use to inspect the supplied options and
     *   mutate as nessesary. 
     */
-    resolveDefinition() {}
+    attributeTypeDidConstruct() {}
 
     /**
     *   A provider invoked to generate the initial value for a this attribute
     *   type on a newly constructed (not reconstructed) model. 
     */
-    getInitialValue() { return null; }
+    _generateInitialValue() { return null; }
 
     /**
     *   A comparison function stub used for sorting many-side relationships in
@@ -84,8 +116,8 @@ class AttributeType {
     validate(value) { return !value || typeof value == this.nativeType; }
 
     /**
-    *   Raise an appropriate `AttributeTypeError` if the given value fails the
-    *   validation check.
+    *   Raise an appropriate error if the given value fails the validation
+    *   check for this type.
     */
     validateOrDie(value) {
         if (!this.validate(value)) throw new AttributeTypeError(
@@ -110,47 +142,6 @@ class AttributeType {
     *   by `JSON.stringify`. See usage context note above.
     */
     serialize(value) { return value; }
-
-    /**
-    *   Return an SQL definition of this attribute type. 
-    */
-    sqlize(name) {
-        const {nullable, fk, pk, immediate, ...options} = this.options;
-
-        //  Process the foreign key target if there is one.
-        let targetCollection, targetAttribute;
-        if (fk) {
-            [targetCollection, targetAttribute] = fk.split('.');
-            if (!targetAttribute) {
-                throw new SchemaError(
-                    `Invalid foreign key target: ${ 
-                        fk 
-                    } (expected "collection.attribute")`
-                );
-            }
-        }
-
-        //  Generate the definition.
-        return ([
-            //  Column type.
-            this.dbType, 
-            //  Early constraints.
-            pk && 'primary key',
-            !nullable && 'not null', 
-            //  Default value.
-            options.default && `default ${ options.default + '' }`,
-            //  Foreign key constraint. Note the constraint is created as 
-            //  initially deferred to allow simpler coupling logic (unless
-            //  otherwise specified).
-            fk && (
-                `,\n\tconstraint ${ name }_fk foreign key (${ 
-                    name 
-                }) references ${ targetCollection }(${ targetAttribute }) ${
-                    !immediate ? 'deferrable initially deferred' : ''
-                }`
-            )
-        ]).filter(a => a).join(' ');
-    }
 }
 
 /**
@@ -170,7 +161,7 @@ class StringAttributeType extends AttributeType {
         super('string', null);
     }
 
-    resolveDefinition() {
+    attributeTypeDidConstruct() {
         const {length, fixed} = this.options;
         
         //  Decide the appropriate in-database type based on supplied options.
@@ -207,14 +198,12 @@ class StringAttributeType extends AttributeType {
     validateOrDie(value) {
         if (!value) return;
 
-        if (!super.validate(value)) {
-            throw new AttributeTypeError(value, 'string');
-        }
-        if (!this.validateLength(value)) {
-            throw new AttributeValueError(
-                value, `expected length < ${ this.options.length }`
-            );
-        }
+        if (!super.validate(value)) throw new AttributeTypeError(
+            null, value, 'string'
+        );
+        if (!this.validateLength(value)) throw new AttributeValueError(
+            null, value, `expected length < ${ this.options.length }`
+        );
     }
 }
 
@@ -249,19 +238,19 @@ class UUIDAttributeType extends AttributeType {
     validateOrDie(value) {
         if (!value) return;
 
-        if (typeof value != 'string') {
-            throw new AttributeTypeError(value, 'string');
-        }
-        if (!this.validateFormat(value)) {
-            throw new AttributeValueError(value, 'Invalid format');
-        }
+        if (typeof value != 'string') throw new AttributeTypeError(
+            null, value, 'string'
+        );
+        if (!this.validateFormat(value)) throw new AttributeValueError(
+            null, value, 'Invalid format'
+        );
     }
 
     /**
     *   If this is specified as a primary key, or the default is specified as
     *   `true`, assign the in-database default to a UUID v4. 
     */
-    resolveDefinition() {
+    attributeTypeDidConstruct() {
         const {pk, ...options} = this.options;
 
         if (options.default === true || pk) this.options.default = 'uuid_generate_v4()';
@@ -299,13 +288,13 @@ class DatetimeAttributeType extends AttributeType {
     deserialize(value) {
         //  Assert type.
         if (typeof value !== 'string') throw new AttributeTypeError(
-            value, 'string'
+            null, value, 'string'
         );
 
         //  Parse with failure safety.
         value = new Date(value);
         if (isNaN(value.getTime())) throw new AttributeValueError(
-            value, 'ISO date format'
+            null, value, 'ISO date format'
         );
 
         return value;

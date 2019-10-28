@@ -1,6 +1,6 @@
-const { AttributeTypeError, RelationalAttributeError, ModelStateError, AttributeValueError } = require('sago');
+const { AttributeTypeError, AttributeValueError } = require('sago');
 
-const { IngredientType, IngredientItem } = require('../model');
+const { IngredientType } = require('../model');
 
 const testSingleModel = async (database, test) => {
     let session = database.session();
@@ -20,7 +20,6 @@ const testSingleModel = async (database, test) => {
 
     session.add(fish);
     await session.commit({close: true});
-    console.log(fish + '');
     test.assertTrue('IDs assigned', fish.id);
     const fishId = fish.id;
 
@@ -34,21 +33,13 @@ const testSingleModel = async (database, test) => {
     }).first();
     test.assertTrue('Simple model refreshes and queries', otherFish === loadedFish);
 
+    loadedFish.name = null;
+    await test.assertThrows('Nullability checked at commit time', AttributeValueError, () => (
+        session.commit()
+    ));
+
     const empty = await session.query(IngredientType).where({name: ['!=', 'fish']}).all();
     test.assertTrue('Empty query = empty list', empty.length === 0);
-
-    const id = loadedFish.id;
-
-    session.delete(loadedFish);
-    test.assertThrows('Post-delete write lock', ModelStateError, () => {
-        otherFish.name = 'cool';
-    });
-
-    session.add(loadedFish);
-    test.assertNoError('Re-creation works', () => {
-        otherFish.name = 'asd';
-    });
-    test.assertTrue('Re-creation maintains ID', id == otherFish.id);
 
     session.delete(loadedFish);
     await session.commit({close: true});

@@ -1,121 +1,90 @@
 /**
-*   The base model class definition. All models must subclass from the class
-*   defined here or risk undefined behaviour.
+*   The base model class definition. This base class provides lifecycle hook
+*   method stubs, as well as several utilities.
 */
 const { 
-    AttributeError, AttributeErrors, AttributeKeyError, ModelStateError
+    ModelStateError, AttributeError, AttributeErrors, AttributeKeyError,
+    ParameterError
 } = require('./errors');
 const { 
-    OneRelationProxy, ManyRelationProxy, RelationProxy 
+    _RelationalSet, OneSideRelationProxy, ManySideRelationProxy, RelationProxy
 } = require('./relations');
-const { attachAttributeProxies } = require('./attributes');
-const { hideProperties } = require('./utils');
+const { 
+    _SideEffectAttributeAssignment, defineHiddenProperties 
+} = require('./utils');
 
 /**
-*   Generate if nessesary and return an relation proxy of the given class,
-*   with on-model caching.
-*/
-const resolveRelationProxyWithCache = (
-    model, RelationProxyClass, destinationReference, options={}
-) => {
-    //  Unpack options.
-    const {fk: fkAttribute, order} = options;
-
-    //  Resolve the cache key from the collection or model class name of the
-    //  destination plus the foreign key attribute key.
-    const cacheKey = `
-        ${ typeof destinationReference == 'function' ? 
-            destinationReference.name : destinationReference 
-        }_${ fkAttribute }
-    `;
-
-    //  Check the on-model cache and populate if nessesary.
-    if (!model._relationCache[cacheKey]) {
-        model._relationCache[cacheKey] = RelationProxyClass.fromModel(
-            model, destinationReference, fkAttribute, order
-        );
-    }
-    //  Return the relation proxy.
-    return model._relationCache[cacheKey];
-}
-
-/**
-*   The base model class implements a constructor which should not be
-*   overridden, placeholder lifecycle hooks, helpers for creating relation
-*   proxies, and methods for performing serialization, update assignment, and 
-*   deep de-serialzation.
-*
-*   The constructor of this class should not be overwritten as there is no
-*   language support for back-door reconstruction. The one defined here accepts
-*   an object which it directly copies. To assign serialized data to a model,
-*   use `update(data, true)`.
-*
-*   All model subclasses must implement a static method `schema()` which
-*   returns either an array `[<collection_name>, <schema_template>]`, or the
-*   schema template directly if the collection name is going to be declared
-*   later (e.g. by class decorator with `Database.collection()`).
-*
-*   Schema templates are maps whose keys are attribute names and values are
-*   either a type reference string or array with `[<type_reference>, 
-*   <options_object>]`. See `types.js` for the list of stock types and their
-*   reference strings.
+*   The base model class. Implements lifecycle hook method stubs, as well as
+*   several utilities. Subclasses cannot override the constructor. Note that
+*   models must inherit from this class _and_ register with their parent
+*   database.
 */
 class Model {
     /**
     *   Create a model, optionally copying attributes from a given object. The
     *   given object should contain only attributes in the schema of this
-    *   model, extraneous keys will result in an `AttributeError`.
+    *   model and initial values of one-side relation proxies.
+    * 
+    *   This constructor cannot be overridden as it is used for reconstruction,
+    *   the `modelDidConstruct()` lifecycle hook should be used instead.
+    *
+    *   The second parameter is reserved for internal use.
     */
     constructor(sourceObject=null, _session=null) {
-        const {_schema} = this.constructor;
-        //  The schema parser will instantiate models to read their class
-        //  fields. If there is no schema assigned to this model class yet,
-        //  we're in that state and don't need to construct anything.
-        if (_schema) {
-            //  Remove definitions.
+        const {_schema: schema} = this.constructor;
+    
+        //  The schema comprehension process will instantiate models to read
+        //  their instance fields. If there is no schema assigned to this model
+        //  class yet, we're in that state and don't need to set up anything.
+        if (schema) {
+            //  Remove possible definitions.
             delete this.schema;
             delete this.collection;
 
-            //  Set up model machinery.
-            hideProperties(this, ...[
-                '_session', '_relationCache', '_setAttributeProxyStates',
-                '_dirty', '_relationshipIntents',
-                '_inboundRelationshipIntentModels'
-            ]);
-            this._setAttributeProxyStates = attachAttributeProxies(
-                this, _schema
-            );
-            this._dirty = {};
-            this._relationCache = {};
-            this._session = _session;
-            //  TODO: Make somewhat conditional.
-            this._relationshipIntents = [];
-            this._inboundRelationshipIntentModels = [];
-            this._ephemeralRelations = [];
+            //  Set hidden attributes.
+            defineHiddenProperties(this, {
+                //  Whether or not attribute proxies should record changes.
+                _dirtying: true,
+                //  A container for attribute proxies to track changes within
+                //  a transaction.
+                _dirty: {},
+                //  A set of relation-management metadata for this model.
+                _relationalSet: new _RelationalSet(this),
+                //  The session to which this model belongs, provided if this
+                //  is a reconstruction.
+                _session,
+                //  Whether this model is row bound. Initialized at true if
+                //  this is a reconstruction.
+                _bound: !!_session
+            });
+            //  Allow the schema to set up the relation proxies for this model.
+            schema._attachAttributeProxies(this);
             
             //  Maybe copy attributes from the supplied source object.
             if (sourceObject) {
-                if (typeof sourceObject != 'object') throw new Error(
+                //  Assert the parameter is of the correct type.
+                if (typeof sourceObject != 'object') throw new ParameterError(
                     'Bad source object'
                 );
                 
-                Object.keys(sourceObject).forEach(key => {
-                    if (key in _schema.attributes) {
-                        //  Assign attributes.
-                        this[key] = sourceObject[key];
+                //  Iterate source object, assigning appropriately.
+                Object.keys(sourceObject).forEach(attribute => {
+                    if (attribute in schema.attributeIdentities) {
+                        //  Simple attributes; assign directly.
+                        this[attribute] = new _SideEffectAttributeAssignment(
+                            sourceObject[attribute]
+                        );
                     }
-                    else if (this[key] instanceof OneRelationProxy) {
-                        //  Assign one-side relation proxies.
-                        this[key].set(sourceObject[key]);
+                    else if (this[attribute] instanceof OneSideRelationProxy) {
+                        //  Initial value for a one-side relation proxy, use
+                        //  the setter.
+                        this[attribute].set(sourceObject[attribute], !_session);
                     }
-                    else throw new AttributeKeyError(key);
+                    else throw new AttributeKeyError(attribute);
                 });
             }
 
-            //  Enable dirtying by attribute proxies.
-            this._setAttributeProxyStates({dirtying: true});
-
-            //  Fire lifecycle hook.
+            //  Invoke lifecycle hook so subclasses can handle construction.
             this.modelDidConstruct();
         }
     }
@@ -124,201 +93,234 @@ class Model {
     *   Update the attributes of this model using the given update object. If
     *   `serialized` is `true`, the values of the update object will be
     *   de-serialized before assignment. If any errors are encountered during
-    *   that process, a cummulative `AttributeErrors` will be thrown.
+    *   this process, a cummulative `AttributeErrors` will be thrown.
     */
     update(updateObject, serialized=false) {
-        const {_schema: {attributes}} = this.constructor;
+        //  Create an error aggregator.
+        const {_schema: schema} = this.constructor, errors = {};
+        
+        //  Iterate update object, assigning with safety.
+        Object.keys(updateObject).forEach(attribute => {
+            //  Retrieve the attribute identity for this attribute key.
+            const identity = schema.attributeIdentities[attribute];
 
-        const errors = {};
-        Object.keys(updateObject).forEach(key => {
-            //  Ensure this is a valid attribute key.
-            if (!(key in attributes)) {
-                errors[key] = new AttributeKeyError(key);
+            //  Ensure this attribute exists.
+            if (!identity) {
+                errors[attribute] = new AttributeKeyError(attribute);
                 return;
             }
 
-            let value = updateObject[key];
+            //  Take the value and deserialize if nessesary.
+            let value = updateObject[attribute];
             if (serialized) {
-                //  Deserialize the given value using it's correct type with
+                //  Deserialize the given value using it's correct type, with
                 //  error collection.
                 try {
-                    value = attributes[key].deserialize(value);
+                    value = identity.type.deserialize(value);
                 }
                 catch (err) {
                     if (!(err instanceof AttributeError)) throw err;
-                    
-                    errors[key] = err;
+                   
+                    //  Save the error.
+                    errors[attribute] = err;
                     return;
                 }
             }
 
             //  Perform assignment with safety for value or type violations.
             try {
-                this[key] = value;
+                this[attribute] = value;
             }
             catch (err) {
                 if (!(err instanceof AttributeError)) throw err;
 
-                errors[key] = err;
+                //  Save the error.
+                errors[attribute] = err;
                 return;
             }
         });
 
-        //  If errors were encounted, throw a cummulative container.
+        //  If errors were encounted, throw a cummulative error.
         if (Object.keys(errors).length) throw new AttributeErrors(errors);
     }
 
     /**
-    *   Serialize this model. When used asynchronously, can serialize
-    *   constituent relations to an arbitrary depth (but not cyclically, duh).
-    *   Overriding this method and calling `super` is an encouraged pattern.
-    *   
-    *   The provided options object can specify `include` and `exclude` lists.
-    *   If `RelationProxy`s are found in the include list, the `async` option
-    *   must also be specified and this method will return a `Promise`.
-    *
-    *   Keys in the include list that correspond to a relation proxy can be
-    *   provided as arrays with `['<attribute_name>', <deep_options>]`, where
-    *   deep options is the options object passed to the models of that
-    *   relationship proxy. This can be nested arbitrarily. The async option is
-    *   provided implicitly.
+    *   Serialize this model, with support for walking relation proxies. Can be
+    *   invoked asynchronously to allow walking of unloaded relation proxies.
+    * 
+    *   By default will return an object containing the set of attributes in
+    *   this models schema. The value of each attribute will be serialized, but
+    *   the return value of this function will still be an object.
+    * 
+    *   The provided options can include:
+    * 
+    *   ~ `include`, a list of additional properties to include in the result. 
+    *     If relation proxy properties are specified, the array element can
+    *     instead be an array where the second element is a nested set of
+    *     options to pass to `serialize()` on the child model. (e.g. `
+    *         order.serialize({include: [['products', {exclude: ['price']}]]})
+    *     `)
+    *   ~ `exclude`, a list of properties to omit from the result.
+    *   ~ `async`, whether to return a `Promise`. Required if an `include`
+    *     list at any depth contains unloaded relation proxies.
+    *   ~ `string`, whether or not to stringify the return value.
     */
-    serialize(options={}) {
-        const {_schema: {attributes}} = this.constructor;
+    serialize({
+        async: isAsync=false,
+        string: returnString=false,
+        include=[],
+        exclude=[], 
+        ...otherOptions
+    }={}) {
+        const {_schema: schema} = this.constructor;
 
-        //  Create a return value helper.
-        const maybeStringify = result => {
-            if (options.string) return JSON.stringify(result);
-            else return result;
-        }
+        //  Validate options set.
+        if (Object.keys(otherOptions).length) throw new ParameterError(
+            `Invalid options: ${ otherOptions }`
+        );
 
-        //  Resolve exclude list.
-        const {include} = options, exclude = options.exclude || [];
+        //  Define helpers.
+        /**
+        *   Perform a final transformation on the result object to ensure it
+        *   respects all options.
+        */
+        const transformReturnValue = result => {
+            //  Ensure we're returning a promise if running asynchronously.
+            if (isAsync && !(result instanceof Promise)) {
+                const trueResult = result;
+                result = new Promise(resolve => resolve(trueResult));
+            }
 
-        //  Collect attribute values not found in the exclude list, with
-        //  serialization.
-        const result = Object.keys(attributes).reduce((result, key) => {
-            if (exclude.indexOf(key) >= 0) return result;
+            //  Honour stringify option.
+            if (returnString) {
+                if (result instanceof Promise) return result.then(result => (
+                    JSON.stringify(result)
+                ));
+                else return JSON.stringify(result);
+            }
 
-            result[key] = attributes[key].serialize(this[key]);
             return result;
-        }, {});
+        };
+        /**
+        *   Serialize the member(s) of a relation proxy. 
+        */
+        const serializeAcrossRelation = (
+            value, deepOptions={}, forceSync=false
+        ) => {
+            const oneChild = !(value instanceof Array),
+                stepAsync = !forceSync && isAsync;
 
-        //  If no include list was specified, we're done.
-        if (!include) {
-            if (options.async) return new Promise(resolve => resolve(result));
-            else return maybeStringify(result);
+            if (oneChild) {
+                if (!value) return null;
+                else value = [value];
+            }
+
+            const result = value.map(model => (
+                model.serialize({...deepOptions, async: stepAsync})
+            ));
+
+            if (oneChild) return result[0];
+            if (stepAsync) return Promise.all(result);
+            return result;
         }
 
-        //  Iterate the include list synchronously if async wasn't specified.
-        //  XXX: We could add support for synchronous serialization with
-        //       `RelationProxy`s if they were previously loaded.
-        if (!options.async) {
-            for (let i = 0; i < include.length; i++) {
-                const key = include[i];
-                let value = this[key];
-            
-                if (value instanceof RelationProxy) throw new Error();
+        //  Collect attribute values not found in the exclude list with
+        //  serialization.
+        const result = Object.values(schema.attributeIdentities)
+            .reduce((result, identity) => {
+                if (exclude.indexOf(identity.attribute) >= 0) return result;
+
+                //  Resolve the type from the identity and serialize the value
+                //  with it.
+                result[identity.attribute] = identity.type.serialize(
+                    this[identity.attribute]
+                );
+                return result;
+            }, {});
+
+        //  Iterate the include list, collecting a list of Promises if we
+        //  encounter unloaded relations and are running asynchronously.
+        const asyncWork = include.map(key => {
+            //  Comprehend and assert the inclusion key and options are valid.
+            let options = null;
+            if (key instanceof Array) [key, options] = key;
+            if (typeof key != 'string') throw new ParameterError(
+                `Invalid include key ${ key }`
+            );
+            if (typeof options != 'object') throw new ParameterError(
+                `Invalid deep options ${ options }`
+            );
+
+            //  Read the value from this model.
+            let value = this[key];
+
+            //  If the value isn't a relation proxy we just assign it to the
+            //  result.
+            if (!(value instanceof RelationProxy)) {
+                //  Assert options weren't supplied.
+                if (options) throw new ParameterError(
+                    `Deep options supplied for simple include ${ key }`
+                )
 
                 result[key] = value;
+                return false;
             }
 
-            return maybeStringify(result);
-        }
-
-        //  Iterate the include list asynchronously. This was hard to write.
-        return Promise.all(include.map(includeKey => {
-            let deepOptions = {};
-            //  Recognize deep options in the include list.
-            if (includeKey instanceof Array) {
-                [includeKey, deepOptions] = includeKey;
+            if (value.loaded) {
+                //  No asynchronous work required, retrieve the relation proxy
+                //  value and serialize synchronously.
+                result[key] = serializeAcrossRelation(
+                    value.get(), options, true
+                );
             }
-            //  Resolve the value.
-            const value = this[includeKey]
-
-            //  Return simple promises for non-relation proxy properties.
-            if (!(value instanceof RelationProxy)) {
-                return new Promise(resolve => resolve(value));
+            else if (isAsync) {
+                //  We can support asynchronous work, load the relation proxy
+                //  and defer the serialization.
+                return value.get().then(resolved => (
+                    serializeAcrossRelation(resolved, options)
+                )).then(resultValue => {
+                    result[key] = resultValue;
+                });
             }
-            
-            const many = value instanceof ManyRelationProxy;
-            return new Promise(resolve => {
-                //  We first resolve the value if its accessor is still
-                //  asynchronous.
+            //  Otherwise, we don't support asynchronous work and this is
+            //  impossible.
+            else throw new ModelStateError(
+                `Unloaded relation in synchronous call to serialize()`
+            );
+        }).filter(a => a);
 
-                //  Relation proxy accessors are synchronous if the relation was
-                //  previously loaded.
-                const generator = value.get();
-                if (!(generator instanceof Promise)) resolve(generator);
-                else generator.then(value => resolve(value));
-            }).then(value => {
-                //  We then allow the one or many related models to serialize
-                //  themselves, resolving with a list of key, serialized
-                //  relationship constituent pairs.
-
-                if (many) {
-                    //  Value is a list of models.
-                    return Promise.all(value.map(model => (
-                        new Promise(resolve => {
-                            model.serialize({
-                                ...deepOptions, async: true
-                            }).then(serialized => {
-                                resolve(serialized);
-                            });
-                        })
-                    ))).then(list => [includeKey, list]);
-                }
-                else if (!value) {
-                    return [includeKey, null];
-                }
-                else {
-                    //  Value is a single model.
-                    return new Promise(resolve => {
-                        value.serialize({
-                            ...deepOptions, async: true
-                        }).then(serialized => {
-                            resolve([includeKey, serialized]);
-                        });
-                    });
-                }
-            });
-        })).then(collectedIncludes => {
-            //  Finally, merge the resulting key, value pairs into our existing
-            //  result object and resolve the top level of this promise swamp.
-            collectedIncludes.forEach(([resolvedKey, resolvedValue]) => {
-                result[resolvedKey] = resolvedValue;
-            });
-            
-            return maybeStringify(result);
-        });
+        //  Return synchronously or wait for all asynchronous work to complete.
+        if (!isAsync) return transformReturnValue(result);
+        else return Promise.all(asyncWork).then(() => (
+            transformReturnValue(result)
+        ));
     }
 
     /**
     *   Return a one-side relation proxy. If there are multiple foreign keys
-    *   that make this relation ambiguous, the key of the one to use must be
-    *   specified in the options object.
+    *   that make this relation ambiguous, the attribute key of the one to use
+    *   must be specified in the options object.
     *  
     *   The destination reference can be a model class or collection name.
     */
     oneRelation(destinationReference, options={}) {
-        return resolveRelationProxyWithCache(
-            this, OneRelationProxy, destinationReference, options
+        return this._relationalSet.resolveRelationProxy(
+            OneSideRelationProxy, destinationReference, options
         );
     }
 
     /**
     *   Return a many-side relation proxy. If there are multiple foreign keys
-    *   that make this relation ambiguous, the key of the one to use must be
-    *   specified in the options object (it will exist on the destination
-    *   side). The options object may also contain an `order` that contains a
-    *   one-hot object whose key is the attribute by which to order (on the
-    *   destination side), and value is `asc` or `desc`.
-    *  
+    *   that make this relation ambiguous, the attribute key of the one to use
+    *   must be specified in the options object (it will exist on the
+    *   one-side). The options object may also contain `order`, a query
+    *   compatable ordering.
+    *   
     *   The destination reference can be a model class or collection name.
     */
     manyRelation(destinationReference, options={}) {
-        return resolveRelationProxyWithCache(
-            this, ManyRelationProxy, destinationReference, options
+        return this._relationalSet.resolveRelationProxy(
+            ManySideRelationProxy, destinationReference, options
         );
     }
 
@@ -344,7 +346,7 @@ class Model {
     *   occur when the model is explicity reloaded by another query, or when
     *   they are first written into the database after construction.
     */
-    modelDidRefresh() {}
+    modelDidHydrate() {}
 
     /**
     *   A model lifecycle stub called before a database write.
@@ -361,9 +363,11 @@ class Model {
     *   getters.
     */
     toString() {
-        const {name, _schema: {attributes}} = this.constructor;
+        const {name, _schema: schema} = this.constructor;
         return `${ name }<Model> {\n  ${
-            Object.keys(attributes).map(a => `${a}: ${this[a]}`).join(',\n  ')
+            Object.keys(schema.attributeIdentities).map(attribute => (
+                `${ attribute }: ${ this[attribute] }`
+            )).join(',\n  ')
         }\n}`;
     }
 }

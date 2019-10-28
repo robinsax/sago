@@ -10,10 +10,9 @@
 */
 const { ModelStateError, SchemaError } = require('./errors');
 const { 
-    SideEffectAssignment, writeLockArray, getInstanceItems, getInstanceValues,
-    assertModelsShareSession
+    _SideEffectAttributeAssignment, getInstanceItems, getInstanceValues
 } = require('./utils');
-const { resolveOrderComponents } = require('./query');
+const { resolveOrderTemplate } = require('./query');
 
 //  Define a sentinel value that is used to identify truely unset values within
 //  relation proxies.
@@ -47,27 +46,111 @@ const setupForeignKeyBetween = (
     oneSideModel, manySideModel, sourceAttribute, destinationAttribute
 ) => {
     //  Sanity check.
-    assertModelsShareSession(oneSideModel, manySideModel);
+    if (oneSideModel._session && manySideModel._session && (
+        oneSideModel._session != manySideModel._session
+    )) throw new ModelStateError(
+        `${ oneSideModel } (one-side) and ${ 
+            manySideModel 
+        } (many-side) are in different sessions`
+    );
 
     if (manySideModel[destinationAttribute] === null) {
         //  There is not a destination value yet. We assume that it will exist
         //  after commit-time (for example if the many-side isn't row bound and
         //  the attribute has an in-database default) and simply register the
         //  intent.
-        manySideModel._relationshipIntents.push({
+        manySideModel._relationalSet.intents.push({
             oneSideModel, sourceAttribute, destinationAttribute
         });
-        oneSideModel._inboundRelationshipIntentModels.push(manySideModel);
+        oneSideModel._relationalSet.inboundIntentModels.push(manySideModel);
     }
     else {
         //  Perform the assignment.
-        oneSideModel[sourceAttribute] = new SideEffectAssignment(
+        oneSideModel[sourceAttribute] = new _SideEffectAttributeAssignment(
             manySideModel[destinationAttribute]
         );
 
-        manySideModel._ephemeralRelations.push({
+        //  Register the fact that there is an inbound ephemeral relation with
+        //  the many-side model so that if it loads attribute proxies later
+        //  (but before commit time) they are aware of this relationship.
+        manySideModel._relationalSet.ephemeralRelations.push({
             oneSideModel, sourceAttribute
-        })
+        });
+    }
+}
+
+/**
+*   Relational sets are model instance metadata holders used to reduce the
+*   impact of metadata on the model instance namespace. They track relation
+*   proxies, relationship intents, and relations with bound (host) models to
+*   ephemeral models. 
+*
+*   The module instantiation machinery is responsible for constructing these
+*   objects.
+*/
+class _RelationalSet {
+    /**
+    *   Construct a relation set with initial values. 
+    */
+    constructor(model) {
+        this.model = model;
+
+        //  A cache of constructed relation proxies.
+        this.proxyCache = {};
+        
+        //  Ephemeral models with a relationship intent towards the host model.
+        this.inboundIntentModels = [];
+        //  Foreign key attribute link descriptors to be resolved at session
+        //  commit time.
+        this.intents = [];
+        //  Descriptors of relations to ephemeral models where this is the
+        //  many side. Used to allow relation proxies to include intended
+        //  relations on load.
+        this.ephemeralRelations = [];
+    }
+
+    /**
+    *   Resolve a relation proxy out of the cache here. Relation proxies must
+    *   be cached to allow them to maintain state without being created
+    *   unnessesarily. 
+    */
+    resolveRelationProxy(RelationProxyClass, destinationReference, options) {
+        //  TODO: Support parallel relation proxies.
+        //  XXX: Bad import.
+        const { Model } = require('./model');
+
+        //  Unpack the foreign key from the provided options set.
+        const {fk: foreignKeyAttribute, ...remainingOptions} = options;
+
+        //  Resolve a unique cache key for this relationship.
+        const cacheKey = [
+            RelationProxyClass.name,
+            destinationReference.prototype instanceof Model ? 
+                destinationReference._schema.collection
+                :
+                destinationReference,
+            foreignKeyAttribute || '<inherent>'
+        ].join('_');
+
+        //  Check the on-model cache and populate if nessesary.
+        const cache = this.model._relationalSet.proxyCache;
+        if (!cache[cacheKey]) cache[cacheKey] = RelationProxyClass.fromModel(
+            this.model, destinationReference, foreignKeyAttribute,
+            remainingOptions
+        );
+
+        //  Return the relation proxy.
+        return cache[cacheKey];
+    }
+
+    /**
+    *   Reset the transactional elements of this relation set. Should only be
+    *   invoked when the in-memory state is know to reflect the database. 
+    */
+    reset() {
+        this.inboundIntentModels = [];
+        this.intents = [];
+        this.ephemeralRelations = [];
     }
 }
 
@@ -82,12 +165,14 @@ class RelationProxy {
     *   the given class on that model, the specific foreign key attribute must
     *   also be supplied.
     */
-    static _findClassedOnModel(MatchClass, model, friendM, fkAttribute=null) {
-        const matches = getInstanceValues(model, MatchClass).filter(proxy => (
+    static _findClassedOnModel(
+        MatchClass, model, friendM, foreignKeyAttribute=null
+    ) {
+        const matches = getInstanceValues(model, MatchClass).filter(proxy => ( 
             //  Match proxies with the correct friend model class, and source
             //  attribute if one was specified.
             proxy.friendM == friendM && (
-                !fkAttribute || fkAttribute == proxy.sourceAttribute
+                !foreignKeyAttribute || foreignKeyAttribute == proxy.sourceAttribute
             )
         ));
 
@@ -112,10 +197,10 @@ class RelationProxy {
     */
     static _classedFromModel(
         CreateClass, relationOrder, model, targetCollectionReference, 
-        fkAttribute, relationConfig={}
+        foreignKeyAttribute, relationConfig={}
     ) {
         //  Retrieve the database to which the provided model belongs.
-        const {constructor: {_schema: {database}}} = model;
+        const {_schema: {database}} = model.constructor;
 
         //  Resolve the target model class from the target collection
         //  reference.
@@ -132,42 +217,42 @@ class RelationProxy {
         //  Resolve the source (one-side) and destination (many-side)
         //  attributes.
         let sourceIdentity = null, destinationIdentity = null;
-        if (fkAttribute) {
+        if (foreignKeyAttribute) {
             //  An attribute was explicitly specified, use that.
 
             //  Retrieve the attribute identity and type, asserting they're
             //  valid.
-            sourceIdentity = oneSideSchema.identities[fkAttribute];
+            sourceIdentity = oneSideSchema.attributes[foreignKeyAttribute];
             if (!sourceIdentity) throw new SchemaError(
-                `${ oneSideSchema } has no attribute ${ fkAttribute }`
+                `${ oneSideSchema } has no attribute ${ foreignKeyAttribute }`
             );
             const sourceType = sourceIdentity.type;
-            if (!sourceType.fkAttributeReference) throw new SchemaError(
-                `Attribute ${ fkAttribute } of ${ 
-                    oneSideSchema 
-                } isn't a foreign key`
-            )
+            if (!sourceType.foreignKeyAttributeReference) throw (
+                new SchemaError(
+                    `Attribute ${ foreignKeyAttribute } of ${ 
+                        oneSideSchema 
+                    } isn't a foreign key`
+                )
+            );
 
             //  Resolve the destination identity.
-            destinationIdentity = database._attributeReferenceToIndentity(
-                sourceType.fkAttributeReference
-            );
+            destinationIdentity = sourceType.foreignKeyDestinationIdentity;
         }
         else {
             //  We need to discover the foreign key attribute ourselves.
 
             //  Iterate all attributes of the many-side.
-            Object.keys(manySideSchema.attributes).forEach(attribute => {
+            const manySideIdentities = manySideSchema.attributeIdentities;
+            Object.values(manySideIdentities).forEach(identity => {
+                const checkType = identity.type;
+
                 //  Retreive the type for this attribute and ensure it's a
                 //  foreign key.
-                const checkType = manySideSchema.attributes[attribute];
-                if (!checkType.fkAttributeReference) return;
+                if (!checkType.isForeignKey) return;
 
                 //  Retreive the identity of the foreign key target attribute
                 //  and ensure it belongs to the correct model.
-                const checkIdentity = database._attributeReferenceToIdentity(
-                    checkType.fkAttributeReference
-                );
+                const checkIdentity = checkType.foreignKeyDestinationIdentity;
                 if (checkIdentity.M._schema != oneSideSchema) return;
 
                 //  This is a valid foreign key, assert we haven't previously
@@ -179,7 +264,7 @@ class RelationProxy {
                 );
 
                 //  Store the discovered identities.
-                sourceIdentity = manySideSchema.identities[attribute];
+                sourceIdentity = identity;
                 destinationIdentity = checkIdentity;
             });
 
@@ -197,7 +282,9 @@ class RelationProxy {
             targetM
         );
         //  Configure the relationship if configuration was provided.
-        if (Object.keys(relationConfig).length) proxy._configure(relationConfig);
+        if (Object.keys(relationConfig).length) proxy._configure(
+            relationConfig
+        );
         //  Return the created relation proxy.
         return proxy;
     }
@@ -225,8 +312,32 @@ class RelationProxy {
     */
     get loaded() { return this._value !== _sentinel; }
 
+    /**
+    *   Force this relationship into an unloaded state. This should only be
+    *   done as a side effect of assignments to the host attribute where the
+    *   new value doesn't correspond to a loaded model. 
+    */
     _forceUnload() {
         this._value = _sentinel;
+    }
+
+    _maybeJoinSession(...models) {
+        models = [this.host, ...models];
+
+        const session = models.map(({_session}) => _session).filter(a => a)[0];
+        if (!session) return;
+
+        models.forEach(model => {
+            if (model._session) {
+                if (model._session != session) throw new ModelStateError(
+                    `${ model } is in a different session`
+                );
+
+                return;
+            }
+            
+            session.add(model);
+        });
     }
 
     /**
@@ -237,8 +348,8 @@ class RelationProxy {
     _findRemoteSideOn(model, ifUnloaded=false) {
         //  Determine the class of the remote side.
         //  XXX: Ugly child-class awareness.
-        const HostClass = this instanceof OneRelationProxy ?
-            ManyRelationProxy : OneRelationProxy;
+        const HostClass = this instanceof OneSideRelationProxy ?
+            ManySideRelationProxy : OneSideRelationProxy;
 
         //  Resolve the remote side.
         const remoteSide = HostClass.findOnModel(
@@ -296,19 +407,33 @@ class RelationProxy {
     _configure(options) { 
         throw new Error('Invalid relationship configuration');
     }
+
+    /**
+    *   Return a simpified representation of this relation proxy for use in
+    *   diagnostics. 
+    */
+    toString() {
+        return `${ this.constructor.name }<${ 
+            this.sourceAttribute } -> ${ this.destinationAttribute 
+        }> {\n  loaded: ${ 
+            this.loaded 
+        },\n  host: ${ 
+            (this.host + '').replace(/\n/g, '\n  ')  
+        }\n}`;
+    }
 }
 
 /**
 *   A relation proxy that lives on one-side models. 
 */
-class OneRelationProxy extends RelationProxy {
+class OneSideRelationProxy extends RelationProxy {
     /**
     *   Find and return the described one-side relation proxy on the given
     *   model or return `null`.
     */
-    static findOnModel(model, friendM, fkAttribute=null) {
+    static findOnModel(model, friendM, foreignKeyAttribute=null) {
         return RelationProxy._findClassedOnModel(
-            OneRelationProxy, model, friendM, fkAttribute
+            OneSideRelationProxy, model, friendM, foreignKeyAttribute
         );
     }
 
@@ -317,10 +442,12 @@ class OneRelationProxy extends RelationProxy {
     *   and referenced target, specifically using the given foreign key if it's
     *   specified. 
     */
-    static fromModel(model, targetCollectionReference, fkAttribute=null) {
+    static fromModel(
+        model, targetCollectionReference, foreignKeyAttribute, options
+    ) {
         return RelationProxy._classedFromModel(
-            OneRelationProxy, (a, b) => [a, b], model,
-            targetCollectionReference, fkAttribute
+            OneSideRelationProxy, (a, b) => [a, b], model,
+            targetCollectionReference, foreignKeyAttribute, options
         );
     }
 
@@ -347,20 +474,10 @@ class OneRelationProxy extends RelationProxy {
     }
 
     /**
-    *   Conditionally load this relation based on the foreign key attribute
-    *   value on the host (i.e. if the foreign key is null we can load this
-    *   relation as pointing nowhere). 
-    */
-    _maybeLoadImplicitly() {
-        //  If the foreign key is null the related model is too.
-        if (!this.loaded && this.host[this.sourceAttribute] === null) this._value = null;
-    }
-
-    /**
     *   If the host of this relation is currently present in a loaded remote
     *   side, remove it from there.
     */
-    _maybeRemoveFromCurrentRemote() {
+    _maybeRemoveFromRemoteSide() {
         //  Ensure we have something to do.
         if (!this.loaded || !this._value) return;
 
@@ -373,18 +490,21 @@ class OneRelationProxy extends RelationProxy {
     /**
     *   Assign a model to this relationship. This method handles coupling in
     *   both directions.
+    *
+    *   The second parameter is reserved for internal use.
     */
-    set(model) {
-        //  Prepare for work.
-        this._maybeLoadImplicitly();
-        this._assertLoaded();
+    set(model, _asConstruction=false) {
+        //  Prepare for work by asserting this relationship is loaded, except
+        //  when this is during construction of an ephemeral model, in which
+        //  case this proxy has no state yet.
+        if (!_asConstruction) this._assertLoaded();
 
         //  Ensure we actually have something to do.
         if (model === this._value) return;
 
         //  Remove the host from the existing remote side it belongs to if
         //  there is one.
-        this._maybeRemoveFromCurrentRemote();
+        this._maybeRemoveFromRemoteSide();
 
         if (model) {
             //  We are setting this relation to point to a non-null model.
@@ -404,14 +524,16 @@ class OneRelationProxy extends RelationProxy {
             //  Push to the new remote side if there is one loaded.
             const newRemoteSide = this._findRemoteSideOn(model);
             if (newRemoteSide) newRemoteSide._pushAsSideEffect(this.host);
+
+            this._maybeJoinSession(model);
         }
         else {
             //  We're clearing this relation.
 
             //  Null out the foreign key value and the value here.
-            this.host[this.sourceAttribute] = new SideEffectAssignment(
-                null
-            );
+            this.host[
+                this.sourceAttribute
+            ] = new _SideEffectAttributeAssignment(null);
             this._value = null;
         }
     }
@@ -421,9 +543,6 @@ class OneRelationProxy extends RelationProxy {
     *   already been loaded, asynchronous otherwise.
     */
     get() {
-        //  Prepare for work.
-        this._maybeLoadImplicitly();
-        
         //  The value here is already loaded, return it synchronously.
         if (this.loaded) return this._value;
 
@@ -445,14 +564,14 @@ class OneRelationProxy extends RelationProxy {
 /**
 *   A relation proxy that lives on many-side models. 
 */
-class ManyRelationProxy extends RelationProxy {
+class ManySideRelationProxy extends RelationProxy {
     /**
     *   Find and return the described one-side relation proxy on the given
     *   model or return `null`.
     */
-    static findOnModel(model, friendM, fkAttribute=null) {
+    static findOnModel(model, friendM, foreignKeyAttribute=null) {
         return RelationProxy._findClassedOnModel(
-            ManyRelationProxy, model, friendM, fkAttribute
+            ManySideRelationProxy, model, friendM, foreignKeyAttribute
         );
     }
 
@@ -462,11 +581,11 @@ class ManyRelationProxy extends RelationProxy {
     *   specified. Order configuration can also be provided.
     */
     static fromModel(
-        model, targetCollectionReference, fkAttribute=null, order=null
+        model, targetCollectionReference, foreignKeyAttribute, options
     ) {
         return RelationProxy._classedFromModel(
-            ManyRelationProxy, (a, b) => [b, a], model, 
-            targetCollectionReference, fkAttribute, {order}
+            ManySideRelationProxy, (a, b) => [b, a], model, 
+            targetCollectionReference, foreignKeyAttribute, options
         );
     }
 
@@ -482,18 +601,6 @@ class ManyRelationProxy extends RelationProxy {
     }
 
     /**
-    *   Return a write-locked copy of the current value of this relationship,
-    *   which must be asserted as loaded by the calling context. 
-    */
-    _getWritedLockedCopy() {
-        return writeLockArray(
-            [...this._value], 
-            "Can't mutate a relationship view directly, mutate the relation " +
-            'proxy or copy the retrieval explicitly'
-        );
-    }
-
-    /**
     *   Validate and accept order configuration.
     */
     _configure(options) {
@@ -505,7 +612,7 @@ class ManyRelationProxy extends RelationProxy {
 
         //  Resolve the configured order components eagerly so malformed data
         //  being passed can be found in the traceback if the resolution fails.
-        this.orderComponents = resolveOrderComponents(
+        this.orderComponents = resolveOrderTemplate(
             order, this.friendM._schema
         );
     }
@@ -592,7 +699,7 @@ class ManyRelationProxy extends RelationProxy {
         const modelRemoteSide = this._findRemoteSideOn(model);
         //  If nessesary, remove the model from the instance of this relation
         //  it's currently present in.
-        if (modelRemoteSide) modelRemoteSide._maybeRemoveFromCurrentRemote();
+        if (modelRemoteSide) modelRemoteSide._maybeRemoveFromRemoteSide();
 
         //  Set up the foreign key attribute link.
         setupForeignKeyBetween(
@@ -605,6 +712,8 @@ class ManyRelationProxy extends RelationProxy {
 
         //  Update the remote side if there is one loaded.
         if (modelRemoteSide) modelRemoteSide._setAsSideEffect(this.host);
+
+        this._maybeJoinSession(model);
     }
 
     /**
@@ -623,7 +732,7 @@ class ManyRelationProxy extends RelationProxy {
         );
 
         //  De-couple the models foreign key and remove from the value here.
-        model[this.sourceAttribute] = new SideEffectAssignment(null);
+        model[this.sourceAttribute] = new _SideEffectAttributeAssignment(null);
         this._value.splice(i, 1);
 
         //  Null the remote side if there is one loaded.
@@ -639,18 +748,23 @@ class ManyRelationProxy extends RelationProxy {
     */
     get() {
         //  The value here has already been loaded, return it synchronously.
-        if (this.loaded) return this._getWritedLockedCopy();
+        if (this.loaded) return [...this._value];
 
         //  The value here hasn't been loaded yet, query the model list and
         //  resolve asynchronously.
         return new Promise(resolve => {
             this.host._session.query(this.friendM).where({
                 [this.sourceAttribute]: this.host[this.destinationAttribute]
-            })._withValidatedOrder(this.orderComponents).all().then(models => {
-                //  Respect ephemeral models that need to be included in this relation.
-                models = [...models, ...this.host._ephemeralRelations.filter(({sourceAttribute}) => (
-                    sourceAttribute == this.sourceAttribute
-                )).map(({oneSideModel}) => oneSideModel)];
+            }).order(this.orderComponents, false).all().then(models => {
+                //  Respect ephemeral models that need to be included in this
+                //  relation.
+                const {ephemeralRelations} = this.host._relationalSet;
+                models = [
+                    ...models, 
+                    ...ephemeralRelations.filter(({sourceAttribute}) => (
+                        sourceAttribute == this.sourceAttribute
+                    )).map(({oneSideModel}) => oneSideModel)
+                ];
 
                 //  Since we now know the state of all involved one-sides, we
                 //  can load those.
@@ -668,7 +782,7 @@ class ManyRelationProxy extends RelationProxy {
                 //  Assign the value here and return a write-locked copy.
                 this._value = models;
                 this._resort(); // XXX: conditionally
-                resolve(this._getWritedLockedCopy());
+                resolve([...models]);
             });
         });
     }
@@ -676,6 +790,6 @@ class ManyRelationProxy extends RelationProxy {
 
 //  Exports.
 module.exports = { 
-    RelationProxy, OneRelationProxy, ManyRelationProxy,
-    relationProxiesAttachedTo
+    RelationProxy, OneSideRelationProxy, ManySideRelationProxy,
+    relationProxiesAttachedTo, _RelationalSet
 };
