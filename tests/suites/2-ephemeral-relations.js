@@ -70,9 +70,7 @@ const testEphemeralRelations = async (database, test) => {
         session.commit()
     ));
 
-    session.delete(salad, twoTomatoes);
-    await session.commit({close: true});
-
+    await session.close();
 };
 
 module.exports = testEphemeralRelations;
