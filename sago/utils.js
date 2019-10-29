@@ -15,6 +15,15 @@ class _SideEffectAttributeAssignment {
     }
 }
 
+/**  
+*   A wrapper for formatted values to be passed to `processSqlTokens`. 
+*/
+class FormatValue {
+    constructor(value) {
+        this.value = value;
+    }
+}
+
 /**
 *   Return all keys defined by the prototype of the given object, optionally
 *   filtering to keys whose values are of the given class. 
@@ -61,8 +70,37 @@ const uniqueElements = array => array.filter((item, i) => (
     array.indexOf(item) == i
 ));
 
+/**
+*   Process the given any-depth list of `FormatValue` objects and SQL strings
+*   into an SQL statement, format value list pair. Falsey values will be
+*   omitted to enable conditionally including tokens in the input.
+*/
+const processSqlTokens = (tokens, multiStatement=false) => {
+    //  Create a storage for format values.
+    const values = [];
+
+    //  Iterate the flattened set of truthy tokens.
+    tokens = tokens.flat(100).filter(a => a).map(token => {
+        if (token instanceof FormatValue) {
+            //  Save the value and push a placeholder.
+            values.push(token.value);
+            return `$${ values.length }`;
+        }
+
+        //  Use the exact token.
+        return token;
+    });
+
+    //  Maybe append a semi-colon.
+    if (!multiStatement) tokens.push(';');
+
+    //  Join the tokens into a statement and return the pair.
+    return [tokens.join(' '), values];
+};
+
 //  Exports.
 module.exports = { 
-    _SideEffectAttributeAssignment, uniqueElements, getInstanceKeys,
-    getInstanceItems, getInstanceValues, defineHiddenProperties
+    _SideEffectAttributeAssignment, FormatValue, uniqueElements,
+    getInstanceKeys, getInstanceItems, getInstanceValues, 
+    defineHiddenProperties, processSqlTokens
 };

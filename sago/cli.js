@@ -3,8 +3,8 @@
 *   the use case is limited, the command line interface only operates on a verb
 *   and set of switches.
 */
-const { databaseCreationSql } = require('./sql');
 const { _retrieveDatabase } = require('./database');
+const { FormatValue, processSqlTokens } = require('./utils');
 
 //  The help message.
 const HELP = `Usage: node sago
@@ -30,6 +30,45 @@ class InvalidInvocation extends Error {
 *   defines more than one. 
 */
 const writeCreationSql = ({app, db, down, full, ...others}) => {
+    //  Define helper methods.
+
+    /**
+    *   Return SQL defining a column for the given attribute identity.
+    */
+    const columnDefinitionSql = ({type, attribute}) => processSqlTokens([
+        attribute, type.dbType, type.isPrimaryKey && 'primary key',
+        !type.isNullable && 'not null', 
+        type.dbDefaultValue && ['default', type.dbDefaultValue],
+        type.isForeignKey && (identity => ([
+            ', constraint', `${ attribute }_fk`, 'foreign key (',
+            attribute, ') references ', identity.M._schema.collection,
+            '(', identity.attribute, ')'
+        ]))(type.foreignKeyDestinationIdentity)
+    ], true)[0];
+
+    /**
+    *    Return SQL defining the collection for the given model schema.
+    */
+    const collectionDefinitionSql = schema => processSqlTokens([
+        'create table', schema.collection, '(', 
+        Object.values(schema.attributeIdentities).map(
+            columnDefinitionSql
+        ).join(', '), ')'
+    ])[0];
+    
+    /**
+    *   Return SQL for creating the given database.
+    */
+    const databaseCreationSql = database => processSqlTokens([
+        'create database', database.name, ';',
+        '\\c', database.name, '\n',
+        //  TODO: Databases should dynamically manage extension set.
+        'create extension "uuid-ossp";',
+        Object.values(database.models).map(M => (
+            collectionDefinitionSql(M._schema)
+        ))
+    ], true)[0];
+
     //  Assert command line is valid.
     if (Object.keys(others).length || !app) throw new InvalidInvocation(
         `Invalid options: ${ Object.keys(others) }`

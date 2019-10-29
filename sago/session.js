@@ -609,6 +609,8 @@ class Session {
         //  Expand the set of to-be-created models to include the models added
         //  by this operation.
         this.creations = uniqueElements([...this.creations, ...models]);
+
+        return this;
     }
 
     /**
@@ -650,6 +652,8 @@ class Session {
         //  Expand the set of to-be-deleted models to include the models
         //  scheduled for deletion by this operation.
         this.deletions = uniqueElements([...this.deletions, ...models]);
+
+        return this;
     }
 
     /**
@@ -712,6 +716,8 @@ class Session {
 
         //  Maybe close the underlying cursor for session.
         if (close) await this.close();
+
+        return this;
     }
 
     /**

@@ -11,16 +11,16 @@ sago is a mini-ORM for node & PostgreSQL. It's intended for web application deve
 * Attactive, low character count usage code.
 * Strictly typed and validated model attributes.
 * Explicit relationship management.
-* `async` if and only if SQL is being emitted.
+* Rarely and predictably `async`.
 * Easy serialization to, and deserialization from, JSON (with useful validation errors).
 
 ```javascript
-const sago, { Model } = require('sago');
+const sago = require('sago');
 
-const database = sago('demo_db');
+const { Model, session, collection } = sago('demo_db');
 
 //  Model definitions.
-@database.collection('recipes') // or database.register(Recipe).
+@collection('recipes') // or database.register(Recipe).
 class Recipe extends Model {
     schema = {
         id: ['uuid', {pk: true}],
@@ -30,7 +30,7 @@ class Recipe extends Model {
     get ingredients() { return this.manyRelation(Ingredient); }
 }
 
-@database.collection('ingredients')
+@collection('ingredients')
 class Ingredient extends Model {
     schema = {
         id: ['uuid', {pk: true}],
@@ -44,21 +44,21 @@ class Ingredient extends Model {
 
 //  Usage.
 (async () => {
-    const session = database.session();
+    const sess = session();
 
-    //  Ephemeral models? No problem.
+    //  Easy to use models? No problem.
     const breakfast = new Recipe({name: 'bacon and eggs'});
     
-    //  Different coupling styles.
+    //  Explicit relationship management and different coupling styles.
     const bacon = new Ingredient({name: 'bacon', quantity: 4});
-    eggs.recipe.set(breakfast);
+    bacon.recipe.set(breakfast); // OR breakfast.ingredients.push(bacon);
     const eggs = new Ingredient({name: 'eggs', quantity: 2, recipe: breakfast});
-
+    
     //  All the relationship management you deserve.
     breakfast.ingredients.get(); // [eggs, bacon]
 
-    //  Implicit models stored automatically.
-    await session.add(breakfast);
+    //  Related models stored automatically.
+    await sess.add(breakfast).commit();
 
     //  Relationship construction always happens in-database.
     eggs.recipe_id == breakfast.id; // true
@@ -66,17 +66,17 @@ class Ingredient extends Model {
     breakfast.name = 3; // Throws an AttributeTypeError.
     breakfast.name = new Array(41).fill('x').join(''); // Throws an AttributeValueError.
 
-    //  Super-powered batch updates from untrusted input. This throws a
-    //  friendly (aggregate) error you can create a response from.
     const untrustedInput = {name: new Date(), id: 1};
+    //  Batch operations from untrusted input. These throw friendly aggregated errors.
     breakfast.update(untrustedInput);
+    new Recipe(untrustedInput);
 
     //  Deep serialization is easy.
     breakfast.serialize({include: ['ingredients']});
 
     //  Automatic attribute update management, of course.
     breakfast.name = 'simple bacon and eggs';
-    //  ...and it's all transactional!
-    await session.commit(); // Emits the above update.
+    //  ...and it's all transactional.
+    await session.commit();
 })();
 ```

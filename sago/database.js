@@ -188,6 +188,11 @@ class Database {
 
         //  Bind the declarative, decorator-based model registrar.
         this.collection = this.collection.bind(this);
+        //  Bind the session factory.
+        this.session = this.session.bind(this);
+
+        //  Provide the base model class as an attribute so usage code can
+        //  destructure it from this object.
 
         //  Register this database in the global lookup.
         _databases[this.name] = this;

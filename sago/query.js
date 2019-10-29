@@ -6,7 +6,7 @@
 *   This module encapsulates all runtime-SQL awareness.
 */
 const { ParameterError, QueryError } = require('./errors');
-const { FormatValue, processSqlTokens } = require('./sql');
+const { FormatValue, processSqlTokens } = require('./utils');
 
 //  The set of permitted logical conjunctives.
 const CONJUNCTIVES = ['and', 'or'];
