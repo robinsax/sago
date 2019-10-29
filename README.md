@@ -83,7 +83,7 @@ class Ingredient extends Model {
 })();
 ```
 
-# Install and testing
+## Install and testing
 
 ```
 npm i @robinsax/sago --save-dev
