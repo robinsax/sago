@@ -77,6 +77,6 @@ class Ingredient extends Model {
     //  Automatic attribute update management, of course.
     breakfast.name = 'simple bacon and eggs';
     //  ...and it's all transactional.
-    await session.commit();
+    await sess.commit();
 })();
 ```
