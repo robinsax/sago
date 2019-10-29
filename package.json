@@ -1,6 +1,6 @@
 {
   "name": "sago",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A mini-ORM for node & PostgreSQL",
   "main": "sago",
   "scripts": {

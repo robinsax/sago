@@ -62,6 +62,11 @@ const testEphemeralRelations = async (database, test) => {
         fish.id && salmon.type_id == fish.id
     ));
 
+    twoSalmon.recipe_id = 'dad6c75d-9849-49da-a59a-3aef4aaeebd9';
+    test.assertTrue('FK assignment to cosmetically correct value unloads relation', (
+        !twoSalmon.recipe.loaded
+    ));
+
     const salad = new Recipe({name: 'salad'});
     const twoTomatoes = new IngredientItem({quantity: '2', recipe: salad});
 

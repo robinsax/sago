@@ -1,8 +1,4 @@
-normal attribute nullability checks -> at session commit
-assert deep serialization config shape
-repackage
 cycle handling for topo ordering
-switch attribute map in schema to identities
 topo sort deletions?
 changing pk handling
 if a model is deleted and has relations then is recreated are they re-loaded
