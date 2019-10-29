@@ -1,5 +1,5 @@
 {
-  "name": "sago",
+  "name": "@robinsax/sago",
   "version": "0.0.2",
   "description": "A mini-ORM for node & PostgreSQL",
   "main": "sago",
@@ -9,6 +9,10 @@
   },
   "author": "Robin Saxifrage",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robinsax/sago"
+  },
   "dependencies": {
     "pg": "^7.12.1"
   },
