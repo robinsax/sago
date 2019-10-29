@@ -12,7 +12,8 @@ const HELP = `Usage: node sago
         Show this message.
     up --app=<app_path> (optional: --db=<database_name>, --full, --down)
         Write table or full database creation SQL for the given app to stdout.
-        Specify the database name if the app defines more than one.`;
+        Specify the database name if the app defines more than one.
+`;
 
 /**
 *   An error thrown when command line input parsing fails. 

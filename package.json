@@ -4,7 +4,8 @@
   "description": "A mini-ORM for node & PostgreSQL",
   "main": "sago",
   "scripts": {
-    "test": "node tests"
+    "test": "node sago up --app=./tests --full --down | sudo -u postgres psql && npx c8 --exclude tests node ./tests",
+    "test-win": "set NODE_PATH=.&& node sago up --app=./tests --full --down | psql --username=postgres && npx c8 --exclude tests node ./tests"
   },
   "author": "Robin Saxifrage",
   "license": "ISC",
