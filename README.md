@@ -82,3 +82,10 @@ class Ingredient extends Model {
     await sess.commit();
 })();
 ```
+
+# Install and testing
+
+```
+npm i @robinsax/sago --save-dev
+npm test
+```
