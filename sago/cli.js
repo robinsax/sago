@@ -10,7 +10,7 @@ const { FormatValue, processSqlTokens } = require('./utils');
 const HELP = `Usage: node sago
     help OR --help
         Show this message.
-    up --app=<app_path> (optional: --db=<database_name>, --full, --down)
+    up (optional: --app=<app_path>, --db=<database_name>, --full, --down)
         Write table or full database creation SQL for the given app to stdout.
         Specify the database name if the app defines more than one.
 `;
@@ -30,7 +30,7 @@ class InvalidInvocation extends Error {
 *   specified path. A database name must be specified if the application
 *   defines more than one. 
 */
-const writeCreationSql = ({app, db, down, full, ...others}) => {
+const writeCreationSql = ({app, db, down, full, out, ...others}) => {
     //  Define helper methods.
 
     /**
@@ -71,44 +71,49 @@ const writeCreationSql = ({app, db, down, full, ...others}) => {
     ], true)[0];
 
     //  Assert command line is valid.
-    if (Object.keys(others).length || !app) throw new InvalidInvocation(
+    if (Object.keys(others).length) throw new InvalidInvocation(
         `Invalid options: ${ Object.keys(others) }`
     );
 
     //  Try to import the target so it can define a database and schema.
-    try {
-        require(`.${ app }`);
-    }
-    catch (err) {
-        console.log(err.stack);
-        throw new InvalidInvocation(`Can't import "${ app }"`);
+    if (app) {
+        try {
+            require(`.${ app }`);
+        }
+        catch (err) {
+            console.log(err.stack);
+            throw new InvalidInvocation(`Can't import "${ app }"`);
+        }
     }
 
     //  Retrieve the specified database, or a registered database in no
     //  order.
     const database = _retrieveDatabase(db || null);
     if (!database) throw new InvalidInvocation(
-        `Database "${ db }" was not defined in "${ app }"`
+        `Database "${ db }" was not defined in "${ app || null }"`
     );
 
     //  Write creation SQL.
     //  XXX: Use a source other than process.env for these parameters.
     const { PGUSER: username, PGPASSWORD: password } = process.env;
-    console.log([
-        `/** ${ database } */`,
-        down && `drop database ${ database.name };`,
-        full && `
-            create user ${ username };
-            alter user ${ username } with login;
-            alter user ${ username } with password '${ password }';
-        `,
+    const sql = processSqlTokens([
+        '/**', database, '*/',
+        down && ['drop database', database.name, ';'],
+        full && [
+            'create user', username, ';',
+            'alter user', username, 'with login;',
+            'alter user', username, 'with password \'', password, '\';'
+        ],
         databaseCreationSql(database),
-        full && `
-            grant all privileges on all tables in schema public to ${ 
-                password 
-            };
-        `
-    ].filter(a => a).join('\n'));
+        full && [
+            'grant all privileges on all tables in schema public to',
+            username, ';'
+        ]
+    ], true)[0];
+
+    //  Output.
+    if (out) require('fs').writeFileSync(out, sql);
+    else console.log(sql);
 
     return 0;
 }

@@ -87,6 +87,7 @@ class AttributeValueError extends AttributeError {
         this.value = value;
         this.identity = identity;
         this.message = message;
+        this.pureMessage = message;
 
         this._updateMessage();
     }

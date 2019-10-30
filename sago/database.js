@@ -193,6 +193,7 @@ class Database {
 
         //  Provide the base model class as an attribute so usage code can
         //  destructure it from this object.
+        this.Model = Model;
 
         //  Register this database in the global lookup.
         _databases[this.name] = this;
@@ -360,6 +361,7 @@ class Database {
             M.collection = collectionName;
             if (schema) M.schema = schema;
             this._registerModel(M);
+            return M;
         };
     }
 

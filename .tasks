@@ -4,3 +4,4 @@ changing pk handling
 if a model is deleted and has relations then is recreated are they re-loaded
 dont use second parameters for internal-only stuff
 rollback support
+improve type system availability

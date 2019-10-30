@@ -1,6 +1,6 @@
 {
   "name": "@robinsax/sago",
-  "version": "0.0.2",
+  "version": "0.0.9",
   "description": "A mini-ORM for node & PostgreSQL",
   "main": "sago",
   "scripts": {
@@ -19,5 +19,8 @@
   "devDependencies": {
     "c8": "^5.0.4",
     "coveralls": "^3.0.6"
+  },
+  "bin": {
+    "sago": "./sago"
   }
 }
